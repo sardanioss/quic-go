@@ -4,8 +4,8 @@ import (
 	"iter"
 	"slices"
 
-	"github.com/quic-go/quic-go/internal/monotime"
-	"github.com/quic-go/quic-go/internal/protocol"
+	"github.com/sardanioss/quic-go/internal/monotime"
+	"github.com/sardanioss/quic-go/internal/protocol"
 )
 
 type lostPacket struct {

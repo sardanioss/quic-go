@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/quic-go/quic-go"
-	quicproxy "github.com/quic-go/quic-go/integrationtests/tools/proxy"
-	"github.com/quic-go/quic-go/internal/protocol"
-	"github.com/quic-go/quic-go/internal/wire"
-	"github.com/quic-go/quic-go/testutils"
+	"github.com/sardanioss/quic-go"
+	quicproxy "github.com/sardanioss/quic-go/integrationtests/tools/proxy"
+	"github.com/sardanioss/quic-go/internal/protocol"
+	"github.com/sardanioss/quic-go/internal/wire"
+	"github.com/sardanioss/quic-go/testutils"
 
 	"github.com/stretchr/testify/require"
 )

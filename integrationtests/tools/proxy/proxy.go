@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/quic-go/quic-go/internal/monotime"
-	"github.com/quic-go/quic-go/internal/protocol"
-	"github.com/quic-go/quic-go/internal/utils"
+	"github.com/sardanioss/quic-go/internal/monotime"
+	"github.com/sardanioss/quic-go/internal/protocol"
+	"github.com/sardanioss/quic-go/internal/utils"
 )
 
 // Connection is a UDP connection
