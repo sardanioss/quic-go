@@ -22,16 +22,20 @@ const MaxUndecryptablePackets = 32
 const ConnectionFlowControlMultiplier = 1.5
 
 // DefaultInitialMaxStreamData is the default initial stream-level flow control window for receiving data
-const DefaultInitialMaxStreamData = (1 << 10) * 512 // 512 kb
+// Chrome uses 6291456 (6 MB) for initial_max_stream_data_bidi_local
+const DefaultInitialMaxStreamData = 6291456 // 6 MB - matches Chrome
 
 // DefaultInitialMaxData is the connection-level flow control window for receiving data
-const DefaultInitialMaxData = ConnectionFlowControlMultiplier * DefaultInitialMaxStreamData
+// Chrome uses 15728640 (15 MB) for initial_max_data
+const DefaultInitialMaxData = 15728640 // 15 MB - matches Chrome
 
 // DefaultMaxReceiveStreamFlowControlWindow is the default maximum stream-level flow control window for receiving data
-const DefaultMaxReceiveStreamFlowControlWindow = 6 * (1 << 20) // 6 MB
+// Chrome uses 16 MB (kStreamReceiveWindowLimit)
+const DefaultMaxReceiveStreamFlowControlWindow = 16 * (1 << 20) // 16 MB - matches Chrome
 
 // DefaultMaxReceiveConnectionFlowControlWindow is the default connection-level flow control window for receiving data
-const DefaultMaxReceiveConnectionFlowControlWindow = 15 * (1 << 20) // 15 MB
+// Chrome uses 24 MB (kSessionReceiveWindowLimit)
+const DefaultMaxReceiveConnectionFlowControlWindow = 24 * (1 << 20) // 24 MB - matches Chrome
 
 // WindowUpdateThreshold is the fraction of the receive window that has to be consumed before an higher offset is advertised to the client
 const WindowUpdateThreshold = 0.25
