@@ -34,6 +34,7 @@ func main() {
 		utils.DefaultLogger.WithPrefix("client"),
 		protocol.Version1,
 		nil, // no uTLS fingerprinting
+		nil, // no ECH
 	)
 
 	config := testdata.GetTLSConfig()
