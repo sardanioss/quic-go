@@ -333,8 +333,10 @@ func (w *requestWriter) encodeHeaders(req *http.Request, addGzipHeader bool, tra
 	if doQlog {
 		headerFields = make([]qlog.HeaderField, 0, len(req.Header))
 	}
+	fmt.Println("[HTTP3 DEBUG] Headers being sent:")
 	enumerateHeaders(func(name, value string) {
 		name = strings.ToLower(name)
+		fmt.Printf("  %s: %s\n", name, value)
 		w.encoder.WriteField(qpack.HeaderField{Name: name, Value: value})
 		if traceHeaders {
 			traceWroteHeaderField(trace, name, value)
