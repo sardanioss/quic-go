@@ -4,8 +4,8 @@ go 1.24
 
 require (
 	github.com/quic-go/qpack v0.6.0
-	github.com/sardanioss/http v0.2.0
-	github.com/sardanioss/utls v0.2.0
+	github.com/sardanioss/http v1.1.0
+	github.com/sardanioss/utls v1.9.0
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/mock v0.5.2
 	golang.org/x/crypto v0.41.0
