@@ -75,6 +75,7 @@ func TestErrorBeforeClientHelloGeneration(t *testing.T) {
 		utils.DefaultLogger.WithPrefix("client"),
 		protocol.Version1,
 		nil,
+		nil,
 	)
 
 	var terr *qerr.TransportError
@@ -196,6 +197,7 @@ func handshakeWithTLSConf(
 		utils.DefaultLogger.WithPrefix("client"),
 		protocol.Version1,
 		nil,
+		nil,
 	)
 
 	if serverTransportParameters.StatelessResetToken == nil {
@@ -289,6 +291,7 @@ func TestTransportParameters(t *testing.T) {
 		nil,
 		utils.DefaultLogger.WithPrefix("client"),
 		protocol.Version1,
+		nil,
 		nil,
 	)
 
