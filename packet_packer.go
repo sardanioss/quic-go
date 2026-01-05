@@ -959,9 +959,6 @@ func (p *packetPacker) appendPacketPayload(raw []byte, pl payload, paddingLen pr
 			return nil, err
 		}
 	}
-	if paddingLen > 0 {
-		raw = append(raw, make([]byte, paddingLen)...)
-	}
 	// Randomize the order of the control frames.
 	// This makes sure that the receiver doesn't rely on the order in which frames are packed.
 	if len(pl.frames) > 1 {
@@ -980,6 +977,10 @@ func (p *packetPacker) appendPacketPayload(raw []byte, pl payload, paddingLen pr
 		if err != nil {
 			return nil, err
 		}
+	}
+	// Add padding at the end (after frames) to match Chrome behavior
+	if paddingLen > 0 {
+		raw = append(raw, make([]byte, paddingLen)...)
 	}
 
 	if payloadSize := protocol.ByteCount(len(raw)-payloadOffset) - paddingLen; payloadSize != pl.length {
