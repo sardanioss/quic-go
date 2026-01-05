@@ -191,6 +191,12 @@ type Config struct {
 	// allowing the TLS ClientHello to mimic a specific browser fingerprint.
 	// This is only used for client connections.
 	ClientHelloID *utls.ClientHelloID
+
+	// ECHConfigList is a serialized ECHConfigList for Encrypted Client Hello.
+	// If provided, clients will attempt to connect using ECH.
+	// This should be fetched from DNS HTTPS records.
+	// Only used when ClientHelloID is set (uTLS mode).
+	ECHConfigList []byte
 }
 
 // ClientInfo contains information about an incoming connection attempt.
