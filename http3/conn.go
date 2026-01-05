@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"maps"
-	"math/rand"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -308,20 +307,15 @@ func (c *rawConn) Settings() *Settings { return c.settings }
 // Context returns the context of the underlying QUIC connection.
 func (c *rawConn) Context() context.Context { return c.conn.Context() }
 
-// generateGreaseFrameType generates a GREASE frame type.
-// GREASE frame types are of the form 0x1f * N + 0x21 where N is a random value.
-func generateGreaseFrameType() uint64 {
-	// Use a reasonable range for N to avoid extremely large frame type values
-	n := rand.Uint64() % (1 << 16)
-	return 0x1f*n + 0x21
-}
+// GREASE frame type - using consistent value like Chrome
+// Formula: 0x1f * N + 0x21, using N=1 gives 0x40
+const greaseFrameType = 0x1f*1 + 0x21 // 0x40
 
 // appendGreaseFrame appends a GREASE frame to the byte slice.
 // GREASE frames help prevent implementation bugs from ossifying protocol extensions.
 func appendGreaseFrame(b []byte) []byte {
-	frameType := generateGreaseFrameType()
-	b = quicvarint.Append(b, frameType)
-	// Chrome typically sends empty GREASE frames (length 0)
+	b = quicvarint.Append(b, greaseFrameType)
+	// Chrome sends empty GREASE frames (length 0)
 	b = quicvarint.Append(b, 0) // frame length
 	return b
 }
