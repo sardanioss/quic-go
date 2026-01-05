@@ -197,6 +197,21 @@ type Config struct {
 	// This should be fetched from DNS HTTPS records.
 	// Only used when ClientHelloID is set (uTLS mode).
 	ECHConfigList []byte
+
+	// DisableClientHelloScrambling disables the SNI/ECH scrambling feature in the
+	// Initial crypto stream. When enabled, the ClientHello is sent in natural order
+	// across fewer packets, matching Chrome's behavior. By default, scrambling is
+	// enabled for privacy (obscures SNI/ECH by fragmenting across packets).
+	// Set to true when fingerprint matching is more important than SNI obscuring.
+	DisableClientHelloScrambling bool
+
+	// ChromeStyleInitialPackets enables Chrome-like frame patterns in Initial packets.
+	// When enabled, the packer will:
+	// - Use smaller CRYPTO frames (max ~150 bytes each)
+	// - Add PING frames interspersed with CRYPTO frames
+	// - Distribute padding across Initial packets
+	// This produces fingerprints closer to Chrome's Initial packet pattern.
+	ChromeStyleInitialPackets bool
 }
 
 // ClientInfo contains information about an incoming connection attempt.

@@ -109,7 +109,7 @@ func TestCryptoStreamWrite(t *testing.T) {
 }
 
 func TestInitialCryptoStreamServer(t *testing.T) {
-	str := newInitialCryptoStream(false)
+	str := newInitialCryptoStream(false, false)
 	_, err := str.Write([]byte("foobar"))
 	require.NoError(t, err)
 
@@ -152,7 +152,7 @@ func skipIfDisableScramblingEnvSet(t *testing.T) {
 func TestInitialCryptoStreamClientStatic(t *testing.T) {
 	skipIfDisableScramblingEnvSet(t)
 
-	str := newInitialCryptoStream(true)
+	str := newInitialCryptoStream(true, false)
 	clientHello := getClientHello(t, "quic-go.net")
 	_, err := str.Write(clientHello)
 	require.NoError(t, err)

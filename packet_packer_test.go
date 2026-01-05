@@ -38,7 +38,7 @@ type testPacketPacker struct {
 func newTestPacketPacker(t *testing.T, mockCtrl *gomock.Controller, pers protocol.Perspective) *testPacketPacker {
 	destConnID := protocol.ParseConnectionID([]byte{1, 2, 3, 4})
 	require.Equal(t, testPackerConnIDLen, destConnID.Len())
-	initialStream := newInitialCryptoStream(pers == protocol.PerspectiveClient)
+	initialStream := newInitialCryptoStream(pers == protocol.PerspectiveClient, false)
 	handshakeStream := newCryptoStream()
 	pnManager := mockackhandler.NewMockSentPacketHandler(mockCtrl)
 	framer := NewMockFrameSource(mockCtrl)
@@ -67,6 +67,7 @@ func newTestPacketPacker(t *testing.T, mockCtrl *gomock.Controller, pers protoco
 			ackFramer,
 			datagramQueue,
 			pers,
+			false, // chromeStyleInitial
 		),
 	}
 }

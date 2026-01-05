@@ -50,7 +50,7 @@ func TestInitialCryptoStreamClientRandomizedSizes(t *testing.T) {
 }
 
 func testInitialCryptoStreamClientRandomizedSizes(t *testing.T, clientHello []byte, expectedServerName string) {
-	str := newInitialCryptoStream(true)
+	str := newInitialCryptoStream(true, false)
 
 	b := slices.Clone(clientHello)
 	for len(b) > 0 {
