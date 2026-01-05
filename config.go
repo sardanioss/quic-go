@@ -126,5 +126,6 @@ func populateConfig(config *Config) *Config {
 		Allow0RTT:                        config.Allow0RTT,
 		Tracer:                           config.Tracer,
 		ClientHelloID:                    config.ClientHelloID,
+		ECHConfigList:                    config.ECHConfigList,
 	}
 }
