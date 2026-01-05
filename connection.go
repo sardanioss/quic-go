@@ -368,7 +368,7 @@ var newConnection = func(
 		s.version,
 	)
 	s.cryptoStreamHandler = cs
-	s.packer = newPacketPacker(srcConnID, s.connIDManager.Get, s.initialStream, s.handshakeStream, s.sentPacketHandler, s.retransmissionQueue, cs, s.framer, &s.receivedPacketHandler, s.datagramQueue, s.perspective)
+	s.packer = newPacketPacker(srcConnID, s.connIDManager.Get, s.initialStream, s.handshakeStream, s.sentPacketHandler, s.retransmissionQueue, cs, s.framer, &s.receivedPacketHandler, s.datagramQueue, s.perspective, s.config.ChromeStyleInitialPackets)
 	s.unpacker = newPacketUnpacker(cs, s.srcConnIDLen)
 	s.cryptoStreamManager = newCryptoStreamManager(s.initialStream, s.handshakeStream, s.oneRTTStream)
 	return &wrappedConn{Conn: s}
@@ -493,7 +493,7 @@ var newClientConnection = func(
 	s.cryptoStreamHandler = cs
 	s.cryptoStreamManager = newCryptoStreamManager(s.initialStream, s.handshakeStream, oneRTTStream)
 	s.unpacker = newPacketUnpacker(cs, s.srcConnIDLen)
-	s.packer = newPacketPacker(srcConnID, s.connIDManager.Get, s.initialStream, s.handshakeStream, s.sentPacketHandler, s.retransmissionQueue, cs, s.framer, &s.receivedPacketHandler, s.datagramQueue, s.perspective)
+	s.packer = newPacketPacker(srcConnID, s.connIDManager.Get, s.initialStream, s.handshakeStream, s.sentPacketHandler, s.retransmissionQueue, cs, s.framer, &s.receivedPacketHandler, s.datagramQueue, s.perspective, s.config.ChromeStyleInitialPackets)
 	if len(tlsConf.ServerName) > 0 {
 		s.tokenStoreKey = tlsConf.ServerName
 	} else {
@@ -510,7 +510,7 @@ var newClientConnection = func(
 
 func (c *Conn) preSetup() {
 	c.largestRcvdAppData = protocol.InvalidPacketNumber
-	c.initialStream = newInitialCryptoStream(c.perspective == protocol.PerspectiveClient)
+	c.initialStream = newInitialCryptoStream(c.perspective == protocol.PerspectiveClient, c.config.DisableClientHelloScrambling)
 	c.handshakeStream = newCryptoStream()
 	c.sendQueue = newSendQueue(c.conn)
 	c.retransmissionQueue = newRetransmissionQueue()

@@ -106,19 +106,22 @@ type clientHelloCut struct {
 type initialCryptoStream struct {
 	baseCryptoStream
 
-	scramble bool
-	end      protocol.ByteCount
-	cuts     [2]clientHelloCut
+	isClient            bool
+	scramble            bool
+	clientHelloComplete bool
+	end                 protocol.ByteCount
+	cuts                [2]clientHelloCut
 }
 
-func newInitialCryptoStream(isClient bool) *initialCryptoStream {
+func newInitialCryptoStream(isClient bool, disableScrambling bool) *initialCryptoStream {
 	var scramble bool
-	if isClient {
+	if isClient && !disableScrambling {
 		disabled, err := strconv.ParseBool(os.Getenv(disableClientHelloScramblingEnv))
 		scramble = err != nil || !disabled
 	}
 	s := &initialCryptoStream{
 		baseCryptoStream: baseCryptoStream{queue: *newFrameSorter()},
+		isClient:         isClient,
 		scramble:         scramble,
 	}
 	for i := range len(s.cuts) {
@@ -130,8 +133,9 @@ func newInitialCryptoStream(isClient bool) *initialCryptoStream {
 
 func (s *initialCryptoStream) HasData() bool {
 	// The ClientHello might be written in multiple parts.
-	// In order to correctly split the ClientHello, we need the entire ClientHello has been queued.
-	if s.scramble && s.writeOffset == 0 && s.cuts[0].start == protocol.InvalidByteCount {
+	// Wait for the entire ClientHello to be queued before sending.
+	// This ensures we send the ClientHello in as few packets as possible.
+	if s.isClient && s.writeOffset == 0 && !s.clientHelloComplete {
 		return false
 	}
 	return s.baseCryptoStream.HasData()
@@ -139,42 +143,46 @@ func (s *initialCryptoStream) HasData() bool {
 
 func (s *initialCryptoStream) Write(p []byte) (int, error) {
 	s.writeBuf = append(s.writeBuf, p...)
-	if !s.scramble {
-		return len(p), nil
-	}
-	if s.cuts[0].start == protocol.InvalidByteCount {
+	// For clients, detect when the full ClientHello is buffered
+	if s.isClient && !s.clientHelloComplete {
 		sniPos, sniLen, echPos, err := findSNIAndECH(s.writeBuf)
 		if errors.Is(err, io.ErrUnexpectedEOF) {
+			// ClientHello not yet complete, wait for more data
 			return len(p), nil
 		}
 		if err != nil {
+			// Parse error, mark as complete to allow sending
+			s.clientHelloComplete = true
 			return len(p), err
 		}
-		if sniPos == -1 && echPos == -1 {
-			// Neither SNI nor ECH found.
-			// There's nothing to scramble.
-			s.scramble = false
-			return len(p), nil
-		}
+		// ClientHello is complete
+		s.clientHelloComplete = true
 		s.end = protocol.ByteCount(len(s.writeBuf))
-		s.cuts[0].start = protocol.ByteCount(sniPos + sniLen/2) // right in the middle
-		s.cuts[0].end = protocol.ByteCount(sniPos + sniLen)
-		if echPos > 0 {
-			// ECH extension found, cut the ECH extension type value (a uint16) in half
-			start := protocol.ByteCount(echPos + 1)
-			s.cuts[1].start = start
-			// cut somewhere (16 bytes), most likely in the ECH extension value
-			s.cuts[1].end = min(start+16, s.end)
+
+		// Only set up scrambling cuts if scrambling is enabled
+		if s.scramble && (sniPos != -1 || echPos != -1) {
+			s.cuts[0].start = protocol.ByteCount(sniPos + sniLen/2) // right in the middle
+			s.cuts[0].end = protocol.ByteCount(sniPos + sniLen)
+			if echPos > 0 {
+				// ECH extension found, cut the ECH extension type value (a uint16) in half
+				start := protocol.ByteCount(echPos + 1)
+				s.cuts[1].start = start
+				// cut somewhere (16 bytes), most likely in the ECH extension value
+				s.cuts[1].end = min(start+16, s.end)
+			}
+			slices.SortFunc(s.cuts[:], func(a, b clientHelloCut) int {
+				if a.start == protocol.InvalidByteCount {
+					return 1
+				}
+				if a.start > b.start {
+					return 1
+				}
+				return -1
+			})
+		} else {
+			// No scrambling needed
+			s.scramble = false
 		}
-		slices.SortFunc(s.cuts[:], func(a, b clientHelloCut) int {
-			if a.start == protocol.InvalidByteCount {
-				return 1
-			}
-			if a.start > b.start {
-				return 1
-			}
-			return -1
-		})
 	}
 	return len(p), nil
 }

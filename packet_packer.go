@@ -135,6 +135,9 @@ type packetPacker struct {
 	rand                rand.Rand
 
 	numNonAckElicitingAcks int
+
+	// chromeStyleInitial enables Chrome-like frame patterns in Initial packets
+	chromeStyleInitial bool
 }
 
 var _ packer = &packetPacker{}
@@ -151,6 +154,7 @@ func newPacketPacker(
 	acks ackFrameSource,
 	datagramQueue *datagramQueue,
 	perspective protocol.Perspective,
+	chromeStyleInitial bool,
 ) *packetPacker {
 	var b [16]byte
 	_, _ = crand.Read(b[:])
@@ -168,6 +172,7 @@ func newPacketPacker(
 		acks:                acks,
 		rand:                *rand.New(rand.NewPCG(binary.BigEndian.Uint64(b[:8]), binary.BigEndian.Uint64(b[8:]))),
 		pnManager:           packetNumberManager,
+		chromeStyleInitial:  chromeStyleInitial,
 	}
 }
 
@@ -562,14 +567,56 @@ func (p *packetPacker) maybeGetCryptoPacket(
 		}
 		return hdr, pl
 	} else {
+		// Chrome-style Initial packets use smaller CRYPTO frames with PING frames interspersed
+		maxCryptoFrameSize := maxPacketSize
+		var cryptoFrameCount int
+		// For Chrome-style, reserve ~25-30% of packet space for padding
+		// This ensures padding is distributed across packets rather than all in the last one
+		var maxDataSize protocol.ByteCount = maxPacketSize
+		if p.chromeStyleInitial && encLevel == protocol.EncryptionInitial {
+			// Chrome uses ~50-150 byte CRYPTO frames
+			maxCryptoFrameSize = 150
+			// Target ~975 bytes of frame data per packet
+			// This ensures 2 Initial packets with ~275 bytes padding each
+			// Chrome has ~329/316 padding, we aim for similar distribution
+			maxDataSize = 975
+			if maxDataSize > maxPacketSize-100 {
+				maxDataSize = maxPacketSize // Don't over-constrain small packets
+			}
+		}
+
 		for hasCryptoData() {
-			cf := popCryptoFrame(maxPacketSize)
+			// Chrome-style: check remaining space before adding frame
+			currentMaxCryptoSize := maxCryptoFrameSize
+			if p.chromeStyleInitial && encLevel == protocol.EncryptionInitial {
+				// Stop if we've already hit our data target
+				if pl.length >= maxDataSize {
+					break
+				}
+				// Limit next frame to not exceed target
+				remainingSpace := maxDataSize - pl.length
+				if remainingSpace < currentMaxCryptoSize {
+					currentMaxCryptoSize = remainingSpace
+				}
+			}
+
+			frameSize := min(currentMaxCryptoSize, maxPacketSize)
+			cf := popCryptoFrame(frameSize)
 			if cf == nil {
 				break
 			}
 			pl.frames = append(pl.frames, ackhandler.Frame{Frame: cf, Handler: handler})
 			pl.length += cf.Length(v)
 			maxPacketSize -= cf.Length(v)
+			cryptoFrameCount++
+
+			// Chrome-style: add PING frames after every 2 CRYPTO frames
+			if p.chromeStyleInitial && encLevel == protocol.EncryptionInitial && cryptoFrameCount%2 == 0 && maxPacketSize > 1 {
+				ping := &wire.PingFrame{}
+				pl.frames = append(pl.frames, ackhandler.Frame{Frame: ping, Handler: emptyHandler{}})
+				pl.length += ping.Length(v)
+				maxPacketSize -= ping.Length(v)
+			}
 		}
 	}
 	return hdr, pl
