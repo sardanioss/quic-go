@@ -490,6 +490,7 @@ var newClientConnection = func(
 		s.qlogger,
 		logger,
 		s.version,
+		s.config.ClientHelloID,
 	)
 	s.cryptoStreamHandler = cs
 	s.cryptoStreamManager = newCryptoStreamManager(s.initialStream, s.handshakeStream, oneRTTStream)

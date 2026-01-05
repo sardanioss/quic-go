@@ -98,6 +98,10 @@ type Transport struct {
 	// However, if the user explicitly requested gzip it is not automatically uncompressed.
 	DisableCompression bool
 
+	// SendGreaseFrames enables sending GREASE frames on the control stream
+	// after the SETTINGS frame, mimicking browser behavior.
+	SendGreaseFrames bool
+
 	Logger *slog.Logger
 
 	mutex sync.Mutex
@@ -133,6 +137,7 @@ func (t *Transport) init() error {
 				t.AdditionalSettings,
 				t.MaxResponseHeaderBytes,
 				t.DisableCompression,
+				t.SendGreaseFrames,
 				t.Logger,
 			)
 		}
@@ -438,6 +443,7 @@ func (t *Transport) NewClientConn(conn *quic.Conn) *ClientConn {
 		t.AdditionalSettings,
 		t.MaxResponseHeaderBytes,
 		t.DisableCompression,
+		t.SendGreaseFrames,
 		t.Logger,
 	)
 	go func() {
@@ -464,6 +470,7 @@ func (t *Transport) NewRawClientConn(conn *quic.Conn) *RawClientConn {
 			t.AdditionalSettings,
 			t.MaxResponseHeaderBytes,
 			t.DisableCompression,
+			t.SendGreaseFrames,
 			t.Logger,
 		),
 	}

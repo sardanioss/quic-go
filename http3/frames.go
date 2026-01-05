@@ -158,6 +158,9 @@ func (f *headersFrame) Append(b []byte) []byte {
 }
 
 const (
+	// QPACK settings
+	settingQPACKMaxTableCapacity = 0x1
+	settingQPACKBlockedStreams   = 0x7
 	// SETTINGS_MAX_FIELD_SECTION_SIZE
 	settingMaxFieldSectionSize = 0x6
 	// Extended CONNECT, RFC 9220
@@ -167,7 +170,10 @@ const (
 )
 
 type settingsFrame struct {
-	MaxFieldSectionSize int64 // SETTINGS_MAX_FIELD_SECTION_SIZE, -1 if not set
+	// QPACK settings (Chrome order: 1, 6, 7, 51, GREASE)
+	QPACKMaxTableCapacity int64 // SETTINGS_QPACK_MAX_TABLE_CAPACITY, -1 if not set
+	MaxFieldSectionSize   int64 // SETTINGS_MAX_FIELD_SECTION_SIZE, -1 if not set
+	QPACKBlockedStreams   int64 // SETTINGS_QPACK_BLOCKED_STREAMS, -1 if not set
 
 	Datagram        bool              // HTTP Datagrams, RFC 9297
 	ExtendedConnect bool              // Extended CONNECT, RFC 9220
@@ -189,10 +195,15 @@ func parseSettingsFrame(r *countingByteReader, l uint64, streamID quic.StreamID,
 		}
 		return nil, err
 	}
-	frame := &settingsFrame{MaxFieldSectionSize: -1}
+	frame := &settingsFrame{
+		QPACKMaxTableCapacity: -1,
+		MaxFieldSectionSize:   -1,
+		QPACKBlockedStreams:   -1,
+	}
 	b := bytes.NewReader(buf)
 	settingsFrame := qlog.SettingsFrame{MaxFieldSectionSize: -1}
 	var readMaxFieldSectionSize, readDatagram, readExtendedConnect bool
+	var readQPACKMaxTableCapacity, readQPACKBlockedStreams bool
 	for b.Len() > 0 {
 		id, err := quicvarint.Read(b)
 		if err != nil { // should not happen. We allocated the whole frame already.
@@ -204,6 +215,18 @@ func parseSettingsFrame(r *countingByteReader, l uint64, streamID quic.StreamID,
 		}
 
 		switch id {
+		case settingQPACKMaxTableCapacity:
+			if readQPACKMaxTableCapacity {
+				return nil, fmt.Errorf("duplicate setting: %d", id)
+			}
+			readQPACKMaxTableCapacity = true
+			frame.QPACKMaxTableCapacity = int64(val)
+		case settingQPACKBlockedStreams:
+			if readQPACKBlockedStreams {
+				return nil, fmt.Errorf("duplicate setting: %d", id)
+			}
+			readQPACKBlockedStreams = true
+			frame.QPACKBlockedStreams = int64(val)
 		case settingMaxFieldSectionSize:
 			if readMaxFieldSectionSize {
 				return nil, fmt.Errorf("duplicate setting: %d", id)
@@ -263,11 +286,16 @@ func parseSettingsFrame(r *countingByteReader, l uint64, streamID quic.StreamID,
 func (f *settingsFrame) Append(b []byte) []byte {
 	b = quicvarint.Append(b, 0x4)
 	var l int
+	// Chrome order: 1 (QPACK_MAX_TABLE_CAPACITY), 6 (MAX_FIELD_SECTION_SIZE),
+	// 7 (QPACK_BLOCKED_STREAMS), 51 (DATAGRAM), GREASE
+	if f.QPACKMaxTableCapacity >= 0 {
+		l += quicvarint.Len(settingQPACKMaxTableCapacity) + quicvarint.Len(uint64(f.QPACKMaxTableCapacity))
+	}
 	if f.MaxFieldSectionSize >= 0 {
 		l += quicvarint.Len(settingMaxFieldSectionSize) + quicvarint.Len(uint64(f.MaxFieldSectionSize))
 	}
-	for id, val := range f.Other {
-		l += quicvarint.Len(id) + quicvarint.Len(val)
+	if f.QPACKBlockedStreams >= 0 {
+		l += quicvarint.Len(settingQPACKBlockedStreams) + quicvarint.Len(uint64(f.QPACKBlockedStreams))
 	}
 	if f.Datagram {
 		l += quicvarint.Len(settingDatagram) + quicvarint.Len(1)
@@ -275,10 +303,23 @@ func (f *settingsFrame) Append(b []byte) []byte {
 	if f.ExtendedConnect {
 		l += quicvarint.Len(settingExtendedConnect) + quicvarint.Len(1)
 	}
+	// Other settings (includes GREASE) at the end
+	for id, val := range f.Other {
+		l += quicvarint.Len(id) + quicvarint.Len(val)
+	}
 	b = quicvarint.Append(b, uint64(l))
+	// Write settings in Chrome order
+	if f.QPACKMaxTableCapacity >= 0 {
+		b = quicvarint.Append(b, settingQPACKMaxTableCapacity)
+		b = quicvarint.Append(b, uint64(f.QPACKMaxTableCapacity))
+	}
 	if f.MaxFieldSectionSize >= 0 {
 		b = quicvarint.Append(b, settingMaxFieldSectionSize)
 		b = quicvarint.Append(b, uint64(f.MaxFieldSectionSize))
+	}
+	if f.QPACKBlockedStreams >= 0 {
+		b = quicvarint.Append(b, settingQPACKBlockedStreams)
+		b = quicvarint.Append(b, uint64(f.QPACKBlockedStreams))
 	}
 	if f.Datagram {
 		b = quicvarint.Append(b, settingDatagram)
@@ -288,6 +329,7 @@ func (f *settingsFrame) Append(b []byte) []byte {
 		b = quicvarint.Append(b, settingExtendedConnect)
 		b = quicvarint.Append(b, 1)
 	}
+	// Other settings (includes GREASE) at the end
 	for id, val := range f.Other {
 		b = quicvarint.Append(b, id)
 		b = quicvarint.Append(b, val)
