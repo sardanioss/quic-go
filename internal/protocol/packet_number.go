@@ -39,13 +39,17 @@ func DecodePacketNumber(length PacketNumberLen, largest PacketNumber, truncated 
 }
 
 // PacketNumberLengthForHeader gets the length of the packet number for the public header
-// it never chooses a PacketNumberLen of 1 byte, since this is too short under certain circumstances
+// Chrome uses mixed 1-byte and 2-byte packet numbers for a more realistic fingerprint
 func PacketNumberLengthForHeader(pn, largestAcked PacketNumber) PacketNumberLen {
 	var numUnacked PacketNumber
 	if largestAcked == InvalidPacketNumber {
 		numUnacked = pn + 1
 	} else {
 		numUnacked = pn - largestAcked
+	}
+	// Use 1-byte packet number for small differences (Chrome behavior)
+	if numUnacked < 1<<(8-1) {
+		return PacketNumberLen1
 	}
 	if numUnacked < 1<<(16-1) {
 		return PacketNumberLen2
