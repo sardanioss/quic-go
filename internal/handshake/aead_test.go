@@ -4,7 +4,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"crypto/tls"
+	tls "github.com/sardanioss/utls"
 	"fmt"
 	"testing"
 

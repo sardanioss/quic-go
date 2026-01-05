@@ -3,11 +3,11 @@ package http3
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
+	tls "github.com/sardanioss/utls"
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
+	http "github.com/sardanioss/http"
 	"net/http/httptest"
 	"strings"
 	"testing"

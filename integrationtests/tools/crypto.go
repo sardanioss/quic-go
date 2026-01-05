@@ -4,7 +4,7 @@ import (
 	"crypto"
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/tls"
+	tls "github.com/sardanioss/utls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"math/big"

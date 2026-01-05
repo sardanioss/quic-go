@@ -4,7 +4,7 @@ import (
 	"crypto"
 	"crypto/cipher"
 	"crypto/rand"
-	"crypto/tls"
+	tls "github.com/sardanioss/utls"
 	"testing"
 	"unsafe"
 

@@ -8,7 +8,7 @@ import (
 	"io"
 	"log"
 	"mime/multipart"
-	"net/http"
+	http "github.com/sardanioss/http"
 	"strconv"
 	"strings"
 	"sync"

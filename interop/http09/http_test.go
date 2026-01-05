@@ -1,11 +1,11 @@
 package http09
 
 import (
-	"crypto/tls"
+	tls "github.com/sardanioss/utls"
 	"fmt"
 	"io"
 	"net"
-	"net/http"
+	http "github.com/sardanioss/http"
 	"net/http/httptest"
 	"testing"
 

@@ -3,7 +3,7 @@ package http3
 import (
 	"bytes"
 	"io"
-	"net/http"
+	http "github.com/sardanioss/http"
 	"net/http/httptest"
 	"testing"
 

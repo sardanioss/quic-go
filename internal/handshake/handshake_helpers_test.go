@@ -1,7 +1,7 @@
 package handshake
 
 import (
-	"crypto/tls"
+	tls "github.com/sardanioss/utls"
 	"encoding/hex"
 	"strings"
 	"testing"

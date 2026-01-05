@@ -1,7 +1,7 @@
 package testdata
 
 import (
-	"crypto/tls"
+	tls "github.com/sardanioss/utls"
 	"crypto/x509"
 	"os"
 	"path"

@@ -2,7 +2,7 @@ package quic
 
 import (
 	"context"
-	"crypto/tls"
+	tls "github.com/sardanioss/utls"
 	"net"
 	"runtime"
 	"testing"

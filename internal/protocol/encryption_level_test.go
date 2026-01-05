@@ -1,7 +1,7 @@
 package protocol
 
 import (
-	"crypto/tls"
+	tls "github.com/sardanioss/utls"
 	"testing"
 
 	"github.com/stretchr/testify/require"

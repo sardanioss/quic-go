@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
-	"net/http/httptrace"
+	http "github.com/sardanioss/http"
+	"github.com/sardanioss/http/httptrace"
 	"time"
 
 	"github.com/sardanioss/quic-go"

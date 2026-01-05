@@ -2,7 +2,7 @@ package handshake
 
 import (
 	"crypto/rand"
-	"crypto/tls"
+	tls "github.com/sardanioss/utls"
 	"fmt"
 	mrand "math/rand/v2"
 	"testing"

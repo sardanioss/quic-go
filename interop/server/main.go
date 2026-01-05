@@ -1,11 +1,11 @@
 package main
 
 import (
-	"crypto/tls"
+	tls "github.com/sardanioss/utls"
 	"fmt"
 	"log"
 	"net"
-	"net/http"
+	http "github.com/sardanioss/http"
 	"os"
 
 	"github.com/sardanioss/quic-go"

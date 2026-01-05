@@ -4,7 +4,7 @@ import (
 	"context"
 	"io"
 	"log"
-	"net/http"
+	http "github.com/sardanioss/http"
 	"net/url"
 	"runtime"
 	"strings"

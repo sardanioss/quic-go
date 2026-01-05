@@ -2,7 +2,7 @@
 
 package self_test
 
-import "crypto/tls"
+import tls "github.com/sardanioss/utls"
 
 func getCurveID(connState tls.ConnectionState) tls.CurveID {
 	return 0

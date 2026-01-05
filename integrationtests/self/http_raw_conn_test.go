@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/http"
+	http "github.com/sardanioss/http"
 	"sync"
 	"testing"
 	"time"

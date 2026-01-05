@@ -1,7 +1,7 @@
 package tools
 
 import (
-	"crypto/tls"
+	tls "github.com/sardanioss/utls"
 	"crypto/x509"
 	"io"
 	"net"
