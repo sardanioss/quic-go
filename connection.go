@@ -461,15 +461,12 @@ var newClientConnection = func(
 		MaxIdleTimeout:                 s.config.MaxIdleTimeout,
 		MaxBidiStreamNum:               protocol.StreamNum(s.config.MaxIncomingStreams),
 		MaxUniStreamNum:                protocol.StreamNum(s.config.MaxIncomingUniStreams),
-		MaxAckDelay:                    protocol.MaxAckDelayInclGranularity,
+		MaxAckDelay:                    protocol.DefaultMaxAckDelay, // Use default so it's not sent (Chrome behavior)
 		MaxUDPPayloadSize:              protocol.MaxPacketBufferSize,
 		AckDelayExponent:               protocol.AckDelayExponent,
-		// For interoperability with quic-go versions before May 2023, this value must be set to a value
-		// different from protocol.DefaultActiveConnectionIDLimit.
-		// If set to the default value, it will be omitted from the transport parameters, which will make
-		// old quic-go versions interpret it as 0, instead of the default value of 2.
-		// See https://github.com/sardanioss/quic-go/pull/3806.
-		ActiveConnectionIDLimit:   protocol.MaxActiveConnectionIDs,
+		// Use default value so active_connection_id_limit is not sent in transport parameters.
+		// Chrome doesn't send this parameter, relying on the default value of 2.
+		ActiveConnectionIDLimit:   protocol.DefaultActiveConnectionIDLimit,
 		InitialSourceConnectionID: srcConnID,
 		EnableResetStreamAt:       conf.EnableStreamResetPartialDelivery,
 	}
