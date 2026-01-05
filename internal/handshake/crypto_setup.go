@@ -104,20 +104,21 @@ func (w *uquicWrapper) ConnectionState() tls.ConnectionState {
 }
 
 // tlsConfigToUtls converts tls.Config to utls.Config for uTLS usage
-func tlsConfigToUtls(cfg *tls.Config) *utls.Config {
+func tlsConfigToUtls(cfg *tls.Config, echConfigList []byte) *utls.Config {
 	ucfg := &utls.Config{
-		Rand:                   cfg.Rand,
-		Time:                   cfg.Time,
-		RootCAs:                cfg.RootCAs,
-		NextProtos:             cfg.NextProtos,
-		ServerName:             cfg.ServerName,
-		InsecureSkipVerify:     cfg.InsecureSkipVerify,
-		CipherSuites:           cfg.CipherSuites,
-		SessionTicketsDisabled: cfg.SessionTicketsDisabled,
-		MinVersion:             cfg.MinVersion,
-		MaxVersion:             cfg.MaxVersion,
-		Renegotiation:          utls.RenegotiationSupport(cfg.Renegotiation),
-		OmitEmptyPsk:           true, // Required for QUIC presets without session resumption
+		Rand:                           cfg.Rand,
+		Time:                           cfg.Time,
+		RootCAs:                        cfg.RootCAs,
+		NextProtos:                     cfg.NextProtos,
+		ServerName:                     cfg.ServerName,
+		InsecureSkipVerify:             cfg.InsecureSkipVerify,
+		CipherSuites:                   cfg.CipherSuites,
+		SessionTicketsDisabled:         cfg.SessionTicketsDisabled,
+		MinVersion:                     cfg.MinVersion,
+		MaxVersion:                     cfg.MaxVersion,
+		Renegotiation:                  utls.RenegotiationSupport(cfg.Renegotiation),
+		OmitEmptyPsk:                   true, // Required for QUIC presets without session resumption
+		EncryptedClientHelloConfigList: echConfigList,
 	}
 	return ucfg
 }
@@ -175,6 +176,7 @@ func NewCryptoSetupClient(
 	logger utils.Logger,
 	version protocol.Version,
 	clientHelloID *utls.ClientHelloID,
+	echConfigList []byte,
 ) CryptoSetup {
 	cs := newCryptoSetup(
 		connID,
@@ -193,7 +195,7 @@ func NewCryptoSetupClient(
 
 	if clientHelloID != nil {
 		// Use uTLS UQUICClient for TLS fingerprinting
-		utlsConf := tlsConfigToUtls(tlsConf)
+		utlsConf := tlsConfigToUtls(tlsConf, echConfigList)
 		uconn := utls.UQUICClient(&utls.QUICConfig{
 			TLSConfig:           utlsConf,
 			EnableSessionEvents: true,
