@@ -334,12 +334,15 @@ const priorityUpdateFrameType = 0xf0700
 // - Prioritized Element ID (stream ID, varint)
 // - Priority Field Value (structured field value, bytes)
 func appendPriorityUpdateFrame(b []byte) []byte {
-	// Chrome typically sends an empty PRIORITY_UPDATE for stream 0
 	// Frame type: 0xf0700 (PRIORITY_UPDATE for request streams)
 	b = quicvarint.Append(b, priorityUpdateFrameType)
-	// Frame payload: stream ID 0 + empty priority field value
-	// Stream ID 0 as varint = 1 byte (0x00)
-	b = quicvarint.Append(b, 1) // frame length (just the stream ID)
+	// Chrome sends "u=0, i" as the priority field value
+	// u=0 means urgency 0 (highest), i means incremental
+	priorityValue := []byte("u=0, i")
+	// Frame payload: stream ID 0 (1 byte varint) + priority field value (6 bytes)
+	frameLen := 1 + len(priorityValue)
+	b = quicvarint.Append(b, uint64(frameLen))
 	b = quicvarint.Append(b, 0) // stream ID 0
+	b = append(b, priorityValue...)
 	return b
 }
