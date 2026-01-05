@@ -148,26 +148,75 @@ func (w *requestWriter) encodeHeaders(req *http.Request, addGzipHeader bool, tra
 		// target URI (the path-absolute production and optionally a '?' character
 		// followed by the query production (see Sections 3.3 and 3.4 of
 		// [RFC3986]).
-		// Chrome uses order: :method, :authority, :scheme, :path (m,a,s,p)
-		f(":method", req.Method)
-		f(":authority", host)
-		if req.Method != http.MethodConnect || isExtendedConnect {
-			f(":scheme", req.URL.Scheme)
-			f(":path", path)
+
+		// Check for pseudo-header order (PHeaderOrderKey)
+		// Default Chrome order: :method, :authority, :scheme, :path (m,a,s,p)
+		pHeaderOrder, hasPHeaderOrder := req.Header[http.PHeaderOrderKey]
+		if hasPHeaderOrder && len(pHeaderOrder) > 0 {
+			// Use custom pseudo-header order
+			for _, p := range pHeaderOrder {
+				switch p {
+				case ":method":
+					f(":method", req.Method)
+				case ":authority":
+					f(":authority", host)
+				case ":scheme":
+					if req.Method != http.MethodConnect || isExtendedConnect {
+						f(":scheme", req.URL.Scheme)
+					}
+				case ":path":
+					if req.Method != http.MethodConnect || isExtendedConnect {
+						f(":path", path)
+					}
+				case ":protocol":
+					if isExtendedConnect {
+						f(":protocol", req.Proto)
+					}
+				}
+			}
+		} else {
+			// Default order: :method, :authority, :scheme, :path
+			f(":method", req.Method)
+			f(":authority", host)
+			if req.Method != http.MethodConnect || isExtendedConnect {
+				f(":scheme", req.URL.Scheme)
+				f(":path", path)
+			}
+			if isExtendedConnect {
+				f(":protocol", req.Proto)
+			}
 		}
-		if isExtendedConnect {
-			f(":protocol", req.Proto)
-		}
+
 		if trailers != "" {
 			f("trailer", trailers)
 		}
 
 		var didUA bool
-		for k, vv := range req.Header {
+
+		// Helper to process a single header
+		processHeader := func(k string) {
+			if k == http.HeaderOrderKey || k == http.PHeaderOrderKey {
+				return
+			}
+			vv, ok := req.Header[k]
+			if !ok {
+				// Try case-insensitive lookup
+				for hk, hvv := range req.Header {
+					if strings.EqualFold(hk, k) {
+						vv = hvv
+						ok = true
+						break
+					}
+				}
+			}
+			if !ok || len(vv) == 0 {
+				return
+			}
+
 			if strings.EqualFold(k, "host") || strings.EqualFold(k, "content-length") {
 				// Host is :authority, already sent.
 				// Content-Length is automatic, set below.
-				continue
+				return
 			} else if strings.EqualFold(k, "connection") || strings.EqualFold(k, "proxy-connection") ||
 				strings.EqualFold(k, "transfer-encoding") || strings.EqualFold(k, "upgrade") ||
 				strings.EqualFold(k, "keep-alive") {
@@ -175,7 +224,7 @@ func (w *requestWriter) encodeHeaders(req *http.Request, addGzipHeader bool, tra
 				// Fields, don't send connection-specific
 				// fields. We have already checked if any
 				// are error-worthy so just ignore the rest.
-				continue
+				return
 			} else if strings.EqualFold(k, "user-agent") {
 				// Match Go's http1 behavior: at most one
 				// User-Agent. If set to nil or empty string,
@@ -183,19 +232,69 @@ func (w *requestWriter) encodeHeaders(req *http.Request, addGzipHeader bool, tra
 				// include the default (below).
 				didUA = true
 				if len(vv) < 1 {
-					continue
+					return
 				}
 				vv = vv[:1]
 				if vv[0] == "" {
-					continue
+					return
 				}
-
 			}
 
 			for _, v := range vv {
 				f(k, v)
 			}
 		}
+
+		// Check for header order (HeaderOrderKey)
+		headerOrder, hasHeaderOrder := req.Header[http.HeaderOrderKey]
+		if hasHeaderOrder && len(headerOrder) > 0 {
+			// Track which headers we've processed
+			processed := make(map[string]bool)
+
+			// First, process headers in the specified order
+			for _, k := range headerOrder {
+				processHeader(k)
+				processed[strings.ToLower(k)] = true
+			}
+
+			// Then process any remaining headers not in the order list
+			for k := range req.Header {
+				if k == http.HeaderOrderKey || k == http.PHeaderOrderKey {
+					continue
+				}
+				if !processed[strings.ToLower(k)] {
+					processHeader(k)
+				}
+			}
+		} else {
+			// No header order specified, use default map iteration
+			for k, vv := range req.Header {
+				if k == http.HeaderOrderKey || k == http.PHeaderOrderKey {
+					continue
+				}
+				if strings.EqualFold(k, "host") || strings.EqualFold(k, "content-length") {
+					continue
+				} else if strings.EqualFold(k, "connection") || strings.EqualFold(k, "proxy-connection") ||
+					strings.EqualFold(k, "transfer-encoding") || strings.EqualFold(k, "upgrade") ||
+					strings.EqualFold(k, "keep-alive") {
+					continue
+				} else if strings.EqualFold(k, "user-agent") {
+					didUA = true
+					if len(vv) < 1 {
+						continue
+					}
+					vv = vv[:1]
+					if vv[0] == "" {
+						continue
+					}
+				}
+
+				for _, v := range vv {
+					f(k, v)
+				}
+			}
+		}
+
 		if shouldSendReqContentLength(req.Method, contentLength) {
 			f("content-length", strconv.FormatInt(contentLength, 10))
 		}
