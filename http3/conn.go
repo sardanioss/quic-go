@@ -88,9 +88,10 @@ func (c *rawConn) openControlStream(settings *settingsFrame) (*quic.SendStream, 
 	b = settings.Append(b)
 
 	// Add GREASE frame after SETTINGS if enabled (mimics Chrome behavior)
-	// Chrome only sends GREASE frame on control stream (PRIORITY_UPDATE is per-request)
 	if c.sendGreaseFrames {
 		b = appendGreaseFrame(b)
+		// Chrome also sends PRIORITY_UPDATE frame on control stream after GREASE
+		b = appendPriorityUpdateFrame(b)
 	}
 
 	if c.qlogger != nil {
