@@ -86,6 +86,7 @@ func newClientConn(
 	additionalSettings map[uint64]uint64,
 	maxResponseHeaderBytes int,
 	disableCompression bool,
+	sendGreaseFrames bool,
 	logger *slog.Logger,
 ) *ClientConn {
 	var qlogger qlogwriter.Recorder
@@ -111,6 +112,7 @@ func newClientConn(
 	c.rawConn = newRawConn(
 		conn,
 		enableDatagrams,
+		sendGreaseFrames,
 		c.onStreamsEmpty,
 		c.handleControlStream,
 		qlogger,
@@ -118,11 +120,26 @@ func newClientConn(
 	)
 	// send the SETTINGs frame, using 0-RTT data, if possible
 	go func() {
-		_, err := c.rawConn.openControlStream(&settingsFrame{
-			Datagram:            enableDatagrams,
-			Other:               additionalSettings,
-			MaxFieldSectionSize: int64(c.maxResponseHeaderBytes),
-		})
+		// Extract QPACK settings from AdditionalSettings for Chrome-like order
+		sf := &settingsFrame{
+			QPACKMaxTableCapacity: -1, // will be set if in additionalSettings
+			MaxFieldSectionSize:   int64(c.maxResponseHeaderBytes),
+			QPACKBlockedStreams:   -1, // will be set if in additionalSettings
+			Datagram:              enableDatagrams,
+			Other:                 make(map[uint64]uint64),
+		}
+		// Extract QPACK settings and put rest in Other
+		for id, val := range additionalSettings {
+			switch id {
+			case settingQPACKMaxTableCapacity:
+				sf.QPACKMaxTableCapacity = int64(val)
+			case settingQPACKBlockedStreams:
+				sf.QPACKBlockedStreams = int64(val)
+			default:
+				sf.Other[id] = val
+			}
+		}
+		_, err := c.rawConn.openControlStream(sf)
 		if err != nil {
 			if c.logger != nil {
 				c.logger.Debug("setting up connection failed", "error", err)

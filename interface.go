@@ -10,7 +10,9 @@ import (
 
 	"github.com/sardanioss/quic-go/internal/handshake"
 	"github.com/sardanioss/quic-go/internal/protocol"
+	"github.com/sardanioss/quic-go/internal/wire"
 	"github.com/sardanioss/quic-go/qlogwriter"
+	utls "github.com/sardanioss/utls"
 )
 
 // The StreamID is the ID of a QUIC stream.
@@ -176,7 +178,19 @@ type Config struct {
 	// See https://datatracker.ietf.org/doc/html/draft-ietf-quic-reliable-stream-reset-07.
 	EnableStreamResetPartialDelivery bool
 
+	// ConnectionIDLength is the length of the connection ID in bytes.
+	// It can be any value between 0 and 20.
+	// If unset (0), a 4 byte connection ID will be used.
+	// Chrome uses 8 bytes for QUIC connections.
+	ConnectionIDLength int
+
 	Tracer func(ctx context.Context, isClient bool, connID ConnectionID) qlogwriter.Trace
+
+	// ClientHelloID specifies a uTLS ClientHelloID for TLS fingerprinting.
+	// When set, the QUIC connection will use uTLS instead of standard crypto/tls,
+	// allowing the TLS ClientHello to mimic a specific browser fingerprint.
+	// This is only used for client connections.
+	ClientHelloID *utls.ClientHelloID
 }
 
 // ClientInfo contains information about an incoming connection attempt.
@@ -207,4 +221,34 @@ type ConnectionState struct {
 	Version Version
 	// GSO says if generic segmentation offload is used.
 	GSO bool
+}
+
+// SetAdditionalTransportParameters sets additional QUIC transport parameters
+// that will be sent by the client during the handshake.
+// This can be used to add browser-specific transport parameters like
+// version_information (0x11) or google_version (0x4752) for fingerprint matching.
+// The map keys are transport parameter IDs and values are the raw parameter bytes.
+func SetAdditionalTransportParameters(params map[uint64][]byte) {
+	wire.AdditionalTransportParametersClient = params
+}
+
+// SetMaxDatagramSize sets the maximum datagram frame size that will be advertised
+// in the max_datagram_frame_size transport parameter.
+// Chrome uses 65536, while the default is 16383.
+func SetMaxDatagramSize(size uint64) {
+	wire.MaxDatagramSize = protocol.ByteCount(size)
+}
+
+// DefaultConnectionIDLength is the default connection ID length for new transports.
+// Chrome uses 8 bytes, while the default is 4 bytes.
+// This can be changed before creating connections.
+var DefaultConnectionIDLength = protocol.DefaultConnectionIDLength
+
+// SetDefaultConnectionIDLength sets the default connection ID length for new transports.
+// Chrome uses 8 bytes for QUIC connections.
+// Valid values are 0-20, but 4-8 are recommended.
+func SetDefaultConnectionIDLength(length int) {
+	if length >= 0 && length <= 20 {
+		DefaultConnectionIDLength = length
+	}
 }

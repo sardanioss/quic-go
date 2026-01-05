@@ -409,7 +409,8 @@ func (t *Transport) init(allowZeroLengthConnIDs bool) error {
 		} else {
 			connIDLen := t.ConnectionIDLength
 			if t.ConnectionIDLength == 0 && !allowZeroLengthConnIDs {
-				connIDLen = protocol.DefaultConnectionIDLength
+				// Use the global DefaultConnectionIDLength (can be set by SetDefaultConnectionIDLength)
+				connIDLen = DefaultConnectionIDLength
 			}
 			t.connIDLen = connIDLen
 			t.connIDGenerator = &protocol.DefaultConnectionIDGenerator{ConnLen: t.connIDLen}

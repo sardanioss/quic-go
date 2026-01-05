@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"maps"
+	"math/rand"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -30,7 +31,8 @@ type rawConn struct {
 
 	logger *slog.Logger
 
-	enableDatagrams bool
+	enableDatagrams  bool
+	sendGreaseFrames bool
 
 	streamMx sync.Mutex
 	streams  map[quic.StreamID]*stateTrackingStream
@@ -51,6 +53,7 @@ type rawConn struct {
 func newRawConn(
 	quicConn *quic.Conn,
 	enableDatagrams bool,
+	sendGreaseFrames bool,
 	onStreamsEmpty func(),
 	controlStrHandler func(*quic.ReceiveStream, *frameParser),
 	qlogger qlogwriter.Recorder,
@@ -60,6 +63,7 @@ func newRawConn(
 		conn:              quicConn,
 		logger:            logger,
 		enableDatagrams:   enableDatagrams,
+		sendGreaseFrames:  sendGreaseFrames,
 		receivedSettings:  make(chan struct{}),
 		streams:           make(map[quic.StreamID]*stateTrackingStream),
 		qlogger:           qlogger,
@@ -82,6 +86,13 @@ func (c *rawConn) openControlStream(settings *settingsFrame) (*quic.SendStream, 
 	b := make([]byte, 0, 64)
 	b = quicvarint.Append(b, streamTypeControlStream)
 	b = settings.Append(b)
+
+	// Add GREASE frame after SETTINGS if enabled (mimics Chrome behavior)
+	// Chrome only sends GREASE frame on control stream (PRIORITY_UPDATE is per-request)
+	if c.sendGreaseFrames {
+		b = appendGreaseFrame(b)
+	}
+
 	if c.qlogger != nil {
 		sf := qlog.SettingsFrame{
 			MaxFieldSectionSize: settings.MaxFieldSectionSize,
@@ -295,3 +306,39 @@ func (c *rawConn) Settings() *Settings { return c.settings }
 
 // Context returns the context of the underlying QUIC connection.
 func (c *rawConn) Context() context.Context { return c.conn.Context() }
+
+// generateGreaseFrameType generates a GREASE frame type.
+// GREASE frame types are of the form 0x1f * N + 0x21 where N is a random value.
+func generateGreaseFrameType() uint64 {
+	// Use a reasonable range for N to avoid extremely large frame type values
+	n := rand.Uint64() % (1 << 16)
+	return 0x1f*n + 0x21
+}
+
+// appendGreaseFrame appends a GREASE frame to the byte slice.
+// GREASE frames help prevent implementation bugs from ossifying protocol extensions.
+func appendGreaseFrame(b []byte) []byte {
+	frameType := generateGreaseFrameType()
+	b = quicvarint.Append(b, frameType)
+	// Chrome typically sends empty GREASE frames (length 0)
+	b = quicvarint.Append(b, 0) // frame length
+	return b
+}
+
+// PRIORITY_UPDATE frame type for request streams (RFC 9218)
+const priorityUpdateFrameType = 0xf0700
+
+// appendPriorityUpdateFrame appends a PRIORITY_UPDATE frame to the byte slice.
+// Chrome sends this frame on the control stream. The frame contains:
+// - Prioritized Element ID (stream ID, varint)
+// - Priority Field Value (structured field value, bytes)
+func appendPriorityUpdateFrame(b []byte) []byte {
+	// Chrome typically sends an empty PRIORITY_UPDATE for stream 0
+	// Frame type: 0xf0700 (PRIORITY_UPDATE for request streams)
+	b = quicvarint.Append(b, priorityUpdateFrameType)
+	// Frame payload: stream ID 0 + empty priority field value
+	// Stream ID 0 as varint = 1 byte (0x00)
+	b = quicvarint.Append(b, 1) // frame length (just the stream ID)
+	b = quicvarint.Append(b, 0) // stream ID 0
+	return b
+}

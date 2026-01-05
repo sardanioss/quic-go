@@ -17,6 +17,7 @@ import (
 	"github.com/sardanioss/quic-go/qlog"
 	"github.com/sardanioss/quic-go/qlogwriter"
 	"github.com/sardanioss/quic-go/quicvarint"
+	utls "github.com/sardanioss/utls"
 )
 
 type quicVersionContextKey struct{}
@@ -25,9 +26,105 @@ var QUICVersionContextKey = &quicVersionContextKey{}
 
 const clientSessionStateRevision = 5
 
+// quicConn is an interface for QUIC TLS connections
+// Both *tls.QUICConn and *uquicWrapper implement this interface
+type quicConn interface {
+	Start(ctx context.Context) error
+	NextEvent() tls.QUICEvent
+	HandleData(level tls.QUICEncryptionLevel, data []byte) error
+	SetTransportParameters(params []byte)
+	SendSessionTicket(opts tls.QUICSessionTicketOptions) error
+	StoreSession(session *tls.SessionState) error
+	Close() error
+	ConnectionState() tls.ConnectionState
+}
+
+// uquicWrapper wraps utls.UQUICConn to implement the quicConn interface
+// by converting between utls and standard tls types
+type uquicWrapper struct {
+	conn *utls.UQUICConn
+}
+
+func (w *uquicWrapper) Start(ctx context.Context) error {
+	return w.conn.Start(ctx)
+}
+
+func (w *uquicWrapper) NextEvent() tls.QUICEvent {
+	ev := w.conn.NextEvent()
+	return tls.QUICEvent{
+		Kind:  tls.QUICEventKind(ev.Kind),
+		Level: tls.QUICEncryptionLevel(ev.Level),
+		Data:  ev.Data,
+		Suite: ev.Suite,
+	}
+}
+
+func (w *uquicWrapper) HandleData(level tls.QUICEncryptionLevel, data []byte) error {
+	return w.conn.HandleData(utls.QUICEncryptionLevel(level), data)
+}
+
+func (w *uquicWrapper) SetTransportParameters(params []byte) {
+	w.conn.SetTransportParameters(params)
+}
+
+func (w *uquicWrapper) SendSessionTicket(opts tls.QUICSessionTicketOptions) error {
+	return w.conn.SendSessionTicket(utls.QUICSessionTicketOptions{
+		EarlyData: opts.EarlyData,
+		Extra:     opts.Extra,
+	})
+}
+
+func (w *uquicWrapper) StoreSession(session *tls.SessionState) error {
+	// Session resumption with uTLS QUIC requires session state conversion
+	// For now, we skip storing sessions - this can be enhanced later
+	return nil
+}
+
+func (w *uquicWrapper) Close() error {
+	return w.conn.Close()
+}
+
+func (w *uquicWrapper) ConnectionState() tls.ConnectionState {
+	ucs := w.conn.ConnectionState()
+	return tls.ConnectionState{
+		Version:                     ucs.Version,
+		HandshakeComplete:           ucs.HandshakeComplete,
+		DidResume:                   ucs.DidResume,
+		CipherSuite:                 ucs.CipherSuite,
+		NegotiatedProtocol:          ucs.NegotiatedProtocol,
+		NegotiatedProtocolIsMutual:  ucs.NegotiatedProtocolIsMutual,
+		ServerName:                  ucs.ServerName,
+		PeerCertificates:            ucs.PeerCertificates,
+		VerifiedChains:              ucs.VerifiedChains,
+		SignedCertificateTimestamps: ucs.SignedCertificateTimestamps,
+		OCSPResponse:                ucs.OCSPResponse,
+		TLSUnique:                   ucs.TLSUnique,
+		ECHAccepted:                 ucs.ECHAccepted,
+	}
+}
+
+// tlsConfigToUtls converts tls.Config to utls.Config for uTLS usage
+func tlsConfigToUtls(cfg *tls.Config) *utls.Config {
+	ucfg := &utls.Config{
+		Rand:                   cfg.Rand,
+		Time:                   cfg.Time,
+		RootCAs:                cfg.RootCAs,
+		NextProtos:             cfg.NextProtos,
+		ServerName:             cfg.ServerName,
+		InsecureSkipVerify:     cfg.InsecureSkipVerify,
+		CipherSuites:           cfg.CipherSuites,
+		SessionTicketsDisabled: cfg.SessionTicketsDisabled,
+		MinVersion:             cfg.MinVersion,
+		MaxVersion:             cfg.MaxVersion,
+		Renegotiation:          utls.RenegotiationSupport(cfg.Renegotiation),
+		OmitEmptyPsk:           true, // Required for QUIC presets without session resumption
+	}
+	return ucfg
+}
+
 type cryptoSetup struct {
 	tlsConf *tls.Config
-	conn    *tls.QUICConn
+	conn    quicConn
 
 	events []Event
 
@@ -67,6 +164,7 @@ type cryptoSetup struct {
 var _ CryptoSetup = &cryptoSetup{}
 
 // NewCryptoSetupClient creates a new crypto setup for the client
+// If clientHelloID is non-nil, uTLS is used for TLS fingerprinting
 func NewCryptoSetupClient(
 	connID protocol.ConnectionID,
 	tp *wire.TransportParameters,
@@ -76,6 +174,7 @@ func NewCryptoSetupClient(
 	qlogger qlogwriter.Recorder,
 	logger utils.Logger,
 	version protocol.Version,
+	clientHelloID *utls.ClientHelloID,
 ) CryptoSetup {
 	cs := newCryptoSetup(
 		connID,
@@ -92,10 +191,21 @@ func NewCryptoSetupClient(
 	cs.tlsConf = tlsConf
 	cs.allow0RTT = enable0RTT
 
-	cs.conn = tls.QUICClient(&tls.QUICConfig{
-		TLSConfig:           tlsConf,
-		EnableSessionEvents: true,
-	})
+	if clientHelloID != nil {
+		// Use uTLS UQUICClient for TLS fingerprinting
+		utlsConf := tlsConfigToUtls(tlsConf)
+		uconn := utls.UQUICClient(&utls.QUICConfig{
+			TLSConfig:           utlsConf,
+			EnableSessionEvents: true,
+		}, *clientHelloID)
+		cs.conn = &uquicWrapper{conn: uconn}
+	} else {
+		// Use standard crypto/tls QUICClient
+		cs.conn = tls.QUICClient(&tls.QUICConfig{
+			TLSConfig:           tlsConf,
+			EnableSessionEvents: true,
+		})
+	}
 	cs.conn.SetTransportParameters(cs.ourParams.Marshal(protocol.PerspectiveClient))
 
 	return cs

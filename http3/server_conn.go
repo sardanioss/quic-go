@@ -52,7 +52,7 @@ func newRawServerConn(
 		qlogger:        qlogger,
 		logger:         logger,
 	}
-	c.rawConn = *newRawConn(conn, enableDatagrams, c.onStreamsEmpty, nil, qlogger, logger)
+	c.rawConn = *newRawConn(conn, enableDatagrams, false, c.onStreamsEmpty, nil, qlogger, logger)
 	if idleTimeout > 0 {
 		c.idleTimer = time.AfterFunc(idleTimeout, c.onIdleTimer)
 	}
