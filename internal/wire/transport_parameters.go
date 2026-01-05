@@ -59,6 +59,20 @@ type PreferredAddress struct {
 	StatelessResetToken protocol.StatelessResetToken
 }
 
+// TransportParameterOrderMode defines how transport parameters are ordered
+type TransportParameterOrderMode int
+
+const (
+	// TransportParameterOrderDefault uses the default quic-go ordering
+	TransportParameterOrderDefault TransportParameterOrderMode = iota
+	// TransportParameterOrderChrome mimics Chrome's transport parameter ordering
+	TransportParameterOrderChrome
+	// TransportParameterOrderFirefox mimics Firefox's transport parameter ordering
+	TransportParameterOrderFirefox
+	// TransportParameterOrderCustom uses a custom order specified in TransportParameterOrder
+	TransportParameterOrderCustom
+)
+
 // TransportParameters are parameters sent to the peer during the handshake
 type TransportParameters struct {
 	InitialMaxStreamDataBidiLocal  protocol.ByteCount
@@ -90,6 +104,12 @@ type TransportParameters struct {
 	MaxDatagramFrameSize protocol.ByteCount // RFC 9221
 	EnableResetStreamAt  bool               // https://datatracker.ietf.org/doc/draft-ietf-quic-reliable-stream-reset/06/
 	MinAckDelay          *time.Duration
+
+	// OrderMode controls the order in which transport parameters are sent
+	OrderMode TransportParameterOrderMode
+	// CustomOrder specifies the order when OrderMode is TransportParameterOrderCustom
+	// Use transport parameter IDs (e.g., 0x1 for max_idle_timeout, 0x4 for initial_max_data)
+	CustomOrder []transportParameterID
 }
 
 // Unmarshal the transport parameters
@@ -350,11 +370,210 @@ func (p *TransportParameters) readNumericTransportParameter(b []byte, paramID tr
 	return nil
 }
 
+// chromeTransportParameterOrder is the order Chrome uses for transport parameters
+var chromeTransportParameterOrder = []transportParameterID{
+	initialMaxDataParameterID,                 // 0x4
+	initialMaxStreamDataBidiLocalParameterID,  // 0x5
+	initialMaxStreamDataBidiRemoteParameterID, // 0x6
+	initialMaxStreamDataUniParameterID,        // 0x7
+	initialMaxStreamsBidiParameterID,          // 0x8
+	initialMaxStreamsUniParameterID,           // 0x9
+	maxIdleTimeoutParameterID,                 // 0x1
+	maxUDPPayloadSizeParameterID,              // 0x3
+	disableActiveMigrationParameterID,         // 0xc
+	activeConnectionIDLimitParameterID,        // 0xe
+	initialSourceConnectionIDParameterID,      // 0xf
+	maxDatagramFrameSizeParameterID,           // 0x20
+}
+
+// firefoxTransportParameterOrder is the order Firefox uses for transport parameters
+var firefoxTransportParameterOrder = []transportParameterID{
+	initialMaxStreamDataBidiLocalParameterID,  // 0x5
+	initialMaxStreamDataBidiRemoteParameterID, // 0x6
+	initialMaxStreamDataUniParameterID,        // 0x7
+	initialMaxDataParameterID,                 // 0x4
+	initialMaxStreamsBidiParameterID,          // 0x8
+	initialMaxStreamsUniParameterID,           // 0x9
+	maxIdleTimeoutParameterID,                 // 0x1
+	activeConnectionIDLimitParameterID,        // 0xe
+	initialSourceConnectionIDParameterID,      // 0xf
+}
+
 // Marshal the transport parameters
 func (p *TransportParameters) Marshal(pers protocol.Perspective) []byte {
 	// Typical Transport Parameters consume around 110 bytes, depending on the exact values,
 	// especially the lengths of the Connection IDs.
 	// Allocate 256 bytes, so we won't have to grow the slice in any case.
+	b := make([]byte, 0, 256)
+
+	// Get the parameter order based on mode
+	var order []transportParameterID
+	switch p.OrderMode {
+	case TransportParameterOrderChrome:
+		order = chromeTransportParameterOrder
+	case TransportParameterOrderFirefox:
+		order = firefoxTransportParameterOrder
+	case TransportParameterOrderCustom:
+		order = p.CustomOrder
+	default:
+		// Use default ordering (original quic-go behavior)
+		return p.marshalDefault(pers)
+	}
+
+	// Add GREASE value at the beginning for Chrome mode
+	if p.OrderMode == TransportParameterOrderChrome {
+		random := make([]byte, 18)
+		rand.Read(random)
+		// Chrome uses GREASE values: 27 + 31*n where n is 0-255
+		b = quicvarint.Append(b, 27+31*uint64(random[0]))
+		length := random[1] % 16
+		b = quicvarint.Append(b, uint64(length))
+		b = append(b, random[2:2+length]...)
+	}
+
+	// Marshal parameters in specified order
+	written := make(map[transportParameterID]bool)
+	for _, paramID := range order {
+		b = p.marshalParam(b, paramID, pers, written)
+	}
+
+	// Add any server-specific parameters not in the order list
+	if pers == protocol.PerspectiveServer {
+		if !written[statelessResetTokenParameterID] && p.StatelessResetToken != nil {
+			b = quicvarint.Append(b, uint64(statelessResetTokenParameterID))
+			b = quicvarint.Append(b, 16)
+			b = append(b, p.StatelessResetToken[:]...)
+		}
+		if !written[originalDestinationConnectionIDParameterID] {
+			b = quicvarint.Append(b, uint64(originalDestinationConnectionIDParameterID))
+			b = quicvarint.Append(b, uint64(p.OriginalDestinationConnectionID.Len()))
+			b = append(b, p.OriginalDestinationConnectionID.Bytes()...)
+		}
+		if !written[preferredAddressParameterID] && p.PreferredAddress != nil {
+			b = p.marshalPreferredAddress(b)
+		}
+		if !written[retrySourceConnectionIDParameterID] && p.RetrySourceConnectionID != nil {
+			b = quicvarint.Append(b, uint64(retrySourceConnectionIDParameterID))
+			b = quicvarint.Append(b, uint64(p.RetrySourceConnectionID.Len()))
+			b = append(b, p.RetrySourceConnectionID.Bytes()...)
+		}
+	}
+
+	// Add additional client parameters
+	if pers == protocol.PerspectiveClient && len(AdditionalTransportParametersClient) > 0 {
+		for k, v := range AdditionalTransportParametersClient {
+			b = quicvarint.Append(b, k)
+			b = quicvarint.Append(b, uint64(len(v)))
+			b = append(b, v...)
+		}
+	}
+
+	return b
+}
+
+// marshalParam marshals a single transport parameter by ID
+func (p *TransportParameters) marshalParam(b []byte, paramID transportParameterID, pers protocol.Perspective, written map[transportParameterID]bool) []byte {
+	if written[paramID] {
+		return b
+	}
+
+	switch paramID {
+	case initialMaxStreamDataBidiLocalParameterID:
+		written[paramID] = true
+		return p.marshalVarintParam(b, paramID, uint64(p.InitialMaxStreamDataBidiLocal))
+	case initialMaxStreamDataBidiRemoteParameterID:
+		written[paramID] = true
+		return p.marshalVarintParam(b, paramID, uint64(p.InitialMaxStreamDataBidiRemote))
+	case initialMaxStreamDataUniParameterID:
+		written[paramID] = true
+		return p.marshalVarintParam(b, paramID, uint64(p.InitialMaxStreamDataUni))
+	case initialMaxDataParameterID:
+		written[paramID] = true
+		return p.marshalVarintParam(b, paramID, uint64(p.InitialMaxData))
+	case initialMaxStreamsBidiParameterID:
+		written[paramID] = true
+		return p.marshalVarintParam(b, paramID, uint64(p.MaxBidiStreamNum))
+	case initialMaxStreamsUniParameterID:
+		written[paramID] = true
+		return p.marshalVarintParam(b, paramID, uint64(p.MaxUniStreamNum))
+	case maxIdleTimeoutParameterID:
+		written[paramID] = true
+		return p.marshalVarintParam(b, paramID, uint64(p.MaxIdleTimeout/time.Millisecond))
+	case maxUDPPayloadSizeParameterID:
+		if p.MaxUDPPayloadSize > 0 {
+			written[paramID] = true
+			return p.marshalVarintParam(b, paramID, uint64(p.MaxUDPPayloadSize))
+		}
+	case maxAckDelayParameterID:
+		if p.MaxAckDelay != protocol.DefaultMaxAckDelay {
+			written[paramID] = true
+			return p.marshalVarintParam(b, paramID, uint64(p.MaxAckDelay/time.Millisecond))
+		}
+	case ackDelayExponentParameterID:
+		if p.AckDelayExponent != protocol.DefaultAckDelayExponent {
+			written[paramID] = true
+			return p.marshalVarintParam(b, paramID, uint64(p.AckDelayExponent))
+		}
+	case disableActiveMigrationParameterID:
+		if p.DisableActiveMigration {
+			written[paramID] = true
+			b = quicvarint.Append(b, uint64(paramID))
+			return quicvarint.Append(b, 0)
+		}
+	case activeConnectionIDLimitParameterID:
+		// Chrome always sends this, even if default
+		written[paramID] = true
+		return p.marshalVarintParam(b, paramID, p.ActiveConnectionIDLimit)
+	case initialSourceConnectionIDParameterID:
+		written[paramID] = true
+		b = quicvarint.Append(b, uint64(paramID))
+		b = quicvarint.Append(b, uint64(p.InitialSourceConnectionID.Len()))
+		return append(b, p.InitialSourceConnectionID.Bytes()...)
+	case maxDatagramFrameSizeParameterID:
+		if p.MaxDatagramFrameSize != protocol.InvalidByteCount {
+			written[paramID] = true
+			return p.marshalVarintParam(b, paramID, uint64(p.MaxDatagramFrameSize))
+		}
+	case resetStreamAtParameterID:
+		if p.EnableResetStreamAt {
+			written[paramID] = true
+			b = quicvarint.Append(b, uint64(paramID))
+			return quicvarint.Append(b, 0)
+		}
+	case minAckDelayParameterID:
+		if p.MinAckDelay != nil {
+			written[paramID] = true
+			return p.marshalVarintParam(b, paramID, uint64(*p.MinAckDelay/time.Microsecond))
+		}
+	}
+	return b
+}
+
+// marshalPreferredAddress marshals the preferred_address parameter
+func (p *TransportParameters) marshalPreferredAddress(b []byte) []byte {
+	b = quicvarint.Append(b, uint64(preferredAddressParameterID))
+	b = quicvarint.Append(b, 4+2+16+2+1+uint64(p.PreferredAddress.ConnectionID.Len())+16)
+	if p.PreferredAddress.IPv4.IsValid() {
+		ipv4 := p.PreferredAddress.IPv4.Addr().As4()
+		b = append(b, ipv4[:]...)
+		b = binary.BigEndian.AppendUint16(b, p.PreferredAddress.IPv4.Port())
+	} else {
+		b = append(b, make([]byte, 6)...)
+	}
+	if p.PreferredAddress.IPv6.IsValid() {
+		ipv6 := p.PreferredAddress.IPv6.Addr().As16()
+		b = append(b, ipv6[:]...)
+		b = binary.BigEndian.AppendUint16(b, p.PreferredAddress.IPv6.Port())
+	} else {
+		b = append(b, make([]byte, 18)...)
+	}
+	b = append(b, uint8(p.PreferredAddress.ConnectionID.Len()))
+	b = append(b, p.PreferredAddress.ConnectionID.Bytes()...)
+	return append(b, p.PreferredAddress.StatelessResetToken[:]...)
+}
+
+// marshalDefault uses the original quic-go ordering (for backward compatibility)
+func (p *TransportParameters) marshalDefault(pers protocol.Perspective) []byte {
 	b := make([]byte, 0, 256)
 
 	// add a greased value
@@ -384,12 +603,10 @@ func (p *TransportParameters) Marshal(pers protocol.Perspective) []byte {
 		b = p.marshalVarintParam(b, maxUDPPayloadSizeParameterID, uint64(p.MaxUDPPayloadSize))
 	}
 	// max_ack_delay
-	// Only send it if is different from the default value.
 	if p.MaxAckDelay != protocol.DefaultMaxAckDelay {
 		b = p.marshalVarintParam(b, maxAckDelayParameterID, uint64(p.MaxAckDelay/time.Millisecond))
 	}
 	// ack_delay_exponent
-	// Only send it if is different from the default value.
 	if p.AckDelayExponent != protocol.DefaultAckDelayExponent {
 		b = p.marshalVarintParam(b, ackDelayExponentParameterID, uint64(p.AckDelayExponent))
 	}
@@ -411,25 +628,7 @@ func (p *TransportParameters) Marshal(pers protocol.Perspective) []byte {
 		b = append(b, p.OriginalDestinationConnectionID.Bytes()...)
 		// preferred_address
 		if p.PreferredAddress != nil {
-			b = quicvarint.Append(b, uint64(preferredAddressParameterID))
-			b = quicvarint.Append(b, 4+2+16+2+1+uint64(p.PreferredAddress.ConnectionID.Len())+16)
-			if p.PreferredAddress.IPv4.IsValid() {
-				ipv4 := p.PreferredAddress.IPv4.Addr().As4()
-				b = append(b, ipv4[:]...)
-				b = binary.BigEndian.AppendUint16(b, p.PreferredAddress.IPv4.Port())
-			} else {
-				b = append(b, make([]byte, 6)...)
-			}
-			if p.PreferredAddress.IPv6.IsValid() {
-				ipv6 := p.PreferredAddress.IPv6.Addr().As16()
-				b = append(b, ipv6[:]...)
-				b = binary.BigEndian.AppendUint16(b, p.PreferredAddress.IPv6.Port())
-			} else {
-				b = append(b, make([]byte, 18)...)
-			}
-			b = append(b, uint8(p.PreferredAddress.ConnectionID.Len()))
-			b = append(b, p.PreferredAddress.ConnectionID.Bytes()...)
-			b = append(b, p.PreferredAddress.StatelessResetToken[:]...)
+			b = p.marshalPreferredAddress(b)
 		}
 	}
 	// active_connection_id_limit
@@ -459,7 +658,7 @@ func (p *TransportParameters) Marshal(pers protocol.Perspective) []byte {
 		b = p.marshalVarintParam(b, minAckDelayParameterID, uint64(*p.MinAckDelay/time.Microsecond))
 	}
 
-	if pers == protocol.PerspectiveClient && len(AdditionalTransportParametersClient) > 0 {
+	if len(AdditionalTransportParametersClient) > 0 {
 		for k, v := range AdditionalTransportParametersClient {
 			b = quicvarint.Append(b, k)
 			b = quicvarint.Append(b, uint64(len(v)))
