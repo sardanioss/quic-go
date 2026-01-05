@@ -3,7 +3,7 @@ package self_test
 import (
 	"io"
 	"net"
-	"net/http"
+	http "github.com/sardanioss/http"
 	"strconv"
 	"testing"
 	"time"

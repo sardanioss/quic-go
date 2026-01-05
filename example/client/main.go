@@ -2,12 +2,12 @@ package main
 
 import (
 	"bytes"
-	"crypto/tls"
+	tls "github.com/sardanioss/utls"
 	"crypto/x509"
 	"flag"
 	"io"
 	"log"
-	"net/http"
+	http "github.com/sardanioss/http"
 	"os"
 	"sync"
 

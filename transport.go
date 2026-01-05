@@ -3,7 +3,7 @@ package quic
 import (
 	"context"
 	"crypto/rand"
-	"crypto/tls"
+	tls "github.com/sardanioss/utls"
 	"errors"
 	"fmt"
 	"net"

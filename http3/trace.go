@@ -1,9 +1,9 @@
 package http3
 
 import (
-	"crypto/tls"
+	tls "github.com/sardanioss/utls"
 	"net"
-	"net/http/httptrace"
+	"github.com/sardanioss/http/httptrace"
 	"net/textproto"
 	"time"
 

@@ -2,11 +2,11 @@ package self_test
 
 import (
 	"context"
-	"crypto/tls"
+	tls "github.com/sardanioss/utls"
 	"fmt"
 	"io"
 	"net"
-	"net/http"
+	http "github.com/sardanioss/http"
 	"net/url"
 	"testing"
 	"time"

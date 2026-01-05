@@ -2,12 +2,12 @@ package http09
 
 import (
 	"context"
-	"crypto/tls"
+	tls "github.com/sardanioss/utls"
 	"errors"
 	"io"
 	"log"
 	"net"
-	"net/http"
+	http "github.com/sardanioss/http"
 	"strings"
 	"sync"
 

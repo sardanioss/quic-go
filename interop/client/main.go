@@ -1,13 +1,13 @@
 package main
 
 import (
-	"crypto/tls"
+	tls "github.com/sardanioss/utls"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log"
-	"net/http"
+	http "github.com/sardanioss/http"
 	"os"
 	"strings"
 	"time"

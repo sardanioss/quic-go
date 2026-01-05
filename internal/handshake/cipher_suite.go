@@ -4,7 +4,7 @@ import (
 	"crypto"
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/tls"
+	tls "github.com/sardanioss/utls"
 	"fmt"
 
 	"golang.org/x/crypto/chacha20poly1305"

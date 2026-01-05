@@ -5,7 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"net/http"
+	http "github.com/sardanioss/http"
 	"runtime"
 	"strconv"
 	"time"

@@ -11,7 +11,7 @@ package http3
 
 import (
 	context "context"
-	http "net/http"
+	http "github.com/sardanioss/http"
 	reflect "reflect"
 
 	quic "github.com/sardanioss/quic-go"

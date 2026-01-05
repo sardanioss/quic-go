@@ -3,7 +3,7 @@ package quic
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
+	tls "github.com/sardanioss/utls"
 	"errors"
 	"math"
 	"net"

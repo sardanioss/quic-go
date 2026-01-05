@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"net/http"
+	http "github.com/sardanioss/http"
 	"testing"
 
 	"github.com/quic-go/qpack"

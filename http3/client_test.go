@@ -6,7 +6,7 @@ import (
 	"context"
 	"io"
 	mrand "math/rand/v2"
-	"net/http"
+	http "github.com/sardanioss/http"
 	"net/http/httptest"
 	"testing"
 	"time"

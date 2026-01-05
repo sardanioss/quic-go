@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"log/slog"
-	"net/http"
+	http "github.com/sardanioss/http"
 	"net/textproto"
 	"strconv"
 	"strings"

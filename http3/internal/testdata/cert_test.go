@@ -1,7 +1,7 @@
 package testdata
 
 import (
-	"crypto/tls"
+	tls "github.com/sardanioss/utls"
 	"io"
 	"testing"
 

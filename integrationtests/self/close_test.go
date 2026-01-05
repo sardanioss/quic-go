@@ -2,7 +2,7 @@ package self_test
 
 import (
 	"context"
-	"crypto/tls"
+	tls "github.com/sardanioss/utls"
 	"net"
 	"sync"
 	"sync/atomic"

@@ -3,7 +3,7 @@ package self_test
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
+	tls "github.com/sardanioss/utls"
 	"fmt"
 	"io"
 	"net"

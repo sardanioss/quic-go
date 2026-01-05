@@ -2,13 +2,13 @@ package http3
 
 import (
 	"context"
-	"crypto/tls"
+	tls "github.com/sardanioss/utls"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
-	"net/http"
+	http "github.com/sardanioss/http"
 	"slices"
 	"strings"
 	"sync"

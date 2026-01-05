@@ -6,7 +6,7 @@ import (
 	"context"
 	"crypto/ecdh"
 	"crypto/rand"
-	"crypto/tls"
+	tls "github.com/sardanioss/utls"
 	"encoding/binary"
 	"io"
 	mrand "math/rand/v2"
