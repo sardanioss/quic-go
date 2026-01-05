@@ -16,6 +16,7 @@ import (
 	"github.com/sardanioss/quic-go"
 	"github.com/sardanioss/quic-go/http3/qlog"
 	"github.com/sardanioss/quic-go/qlogwriter"
+	"github.com/sardanioss/quic-go/quicvarint"
 )
 
 const (
@@ -147,6 +148,12 @@ func newClientConn(
 			c.conn.CloseWithError(quic.ApplicationErrorCode(ErrCodeInternalError), "")
 			return
 		}
+
+		// Open QPACK encoder stream (Chrome opens this even without dynamic table)
+		c.openQPACKEncoderStream()
+
+		// Open QPACK decoder stream (Chrome opens this even without dynamic table)
+		c.openQPACKDecoderStream()
 	}()
 	return c
 }
@@ -498,6 +505,48 @@ func (c *ClientConn) doRequest(req *http.Request, str *RequestStream) (*http.Res
 	res.TLS = &connState
 	res.Request = req
 	return res, nil
+}
+
+// openQPACKEncoderStream opens the QPACK encoder stream.
+// Chrome opens this stream even without using dynamic tables.
+func (c *ClientConn) openQPACKEncoderStream() {
+	str, err := c.rawConn.OpenUniStream()
+	if err != nil {
+		if c.logger != nil {
+			c.logger.Debug("failed to open QPACK encoder stream", "error", err)
+		}
+		return
+	}
+	// Write stream type (QPACK encoder = 2)
+	b := make([]byte, 0, 8)
+	b = quicvarint.Append(b, streamTypeQPACKEncoderStream)
+	if _, err := str.Write(b); err != nil {
+		if c.logger != nil {
+			c.logger.Debug("failed to write QPACK encoder stream type", "error", err)
+		}
+	}
+	// Keep stream open but don't write anything else (no dynamic table updates)
+}
+
+// openQPACKDecoderStream opens the QPACK decoder stream.
+// Chrome opens this stream even without using dynamic tables.
+func (c *ClientConn) openQPACKDecoderStream() {
+	str, err := c.rawConn.OpenUniStream()
+	if err != nil {
+		if c.logger != nil {
+			c.logger.Debug("failed to open QPACK decoder stream", "error", err)
+		}
+		return
+	}
+	// Write stream type (QPACK decoder = 3)
+	b := make([]byte, 0, 8)
+	b = quicvarint.Append(b, streamTypeQPACKDecoderStream)
+	if _, err := str.Write(b); err != nil {
+		if c.logger != nil {
+			c.logger.Debug("failed to write QPACK decoder stream type", "error", err)
+		}
+	}
+	// Keep stream open but don't write anything else (no decoder acknowledgements)
 }
 
 // RawClientConn is a low-level HTTP/3 client connection.
