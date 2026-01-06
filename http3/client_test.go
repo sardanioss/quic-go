@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/quic-go/qpack"
+	"github.com/sardanioss/qpack"
 	"github.com/sardanioss/quic-go"
 	"github.com/sardanioss/quic-go/http3/qlog"
 	"github.com/sardanioss/quic-go/qlogwriter"

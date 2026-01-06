@@ -8,7 +8,7 @@ import (
 	http "github.com/sardanioss/http"
 	"testing"
 
-	"github.com/quic-go/qpack"
+	"github.com/sardanioss/qpack"
 	"github.com/stretchr/testify/require"
 )
 

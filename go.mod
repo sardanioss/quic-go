@@ -3,7 +3,7 @@ module github.com/sardanioss/quic-go
 go 1.24.0
 
 require (
-	github.com/quic-go/qpack v0.6.0
+	github.com/sardanioss/qpack v0.6.1
 	github.com/sardanioss/http v1.1.0
 	github.com/sardanioss/utls v1.9.1
 	github.com/stretchr/testify v1.11.1
@@ -13,6 +13,9 @@ require (
 	golang.org/x/sync v0.19.0
 	golang.org/x/sys v0.39.0
 )
+
+// Use local fork with dynamic table support
+replace github.com/sardanioss/qpack => /home/saksham/own_tools/qpack
 
 require (
 	github.com/andybalholm/brotli v1.1.1 // indirect

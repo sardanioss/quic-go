@@ -17,7 +17,7 @@ import (
 	"github.com/sardanioss/quic-go/qlogwriter"
 	"github.com/sardanioss/quic-go/testutils/events"
 
-	"github.com/quic-go/qpack"
+	"github.com/sardanioss/qpack"
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"

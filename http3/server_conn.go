@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/quic-go/qpack"
+	"github.com/sardanioss/qpack"
 	"github.com/sardanioss/quic-go"
 	"github.com/sardanioss/quic-go/qlogwriter"
 )

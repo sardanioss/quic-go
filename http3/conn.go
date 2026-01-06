@@ -47,6 +47,10 @@ type rawConn struct {
 	receivedSettings chan struct{}
 
 	qlogger qlogwriter.Recorder
+
+	// qpackEncoderInstructionHandler processes QPACK encoder instructions from the peer
+	// This is optional - if nil, encoder instructions are ignored (no dynamic table)
+	qpackEncoderInstructionHandler func([]byte) error
 }
 
 func newRawConn(
@@ -168,8 +172,12 @@ func (c *rawConn) handleUnidirectionalStream(str *quic.ReceiveStream, isServer b
 	case streamTypeQPACKEncoderStream:
 		if isFirst := c.rcvdQPACKEncoderStr.CompareAndSwap(false, true); !isFirst {
 			c.CloseWithError(quic.ApplicationErrorCode(ErrCodeStreamCreationError), "duplicate QPACK encoder stream")
+			return
 		}
-		// Our QPACK implementation doesn't use the dynamic table yet.
+		// Process encoder instructions if handler is set
+		if c.qpackEncoderInstructionHandler != nil {
+			go c.handleQPACKEncoderStream(str)
+		}
 		return
 	case streamTypeQPACKDecoderStream:
 		if isFirst := c.rcvdQPACKDecoderStr.CompareAndSwap(false, true); !isFirst {
@@ -306,6 +314,33 @@ func (c *rawConn) Settings() *Settings { return c.settings }
 
 // Context returns the context of the underlying QUIC connection.
 func (c *rawConn) Context() context.Context { return c.conn.Context() }
+
+// handleQPACKEncoderStream reads and processes QPACK encoder instructions from the peer.
+// This populates the dynamic table so we can decode headers that reference it.
+func (c *rawConn) handleQPACKEncoderStream(str *quic.ReceiveStream) {
+	buf := make([]byte, 4096)
+	for {
+		n, err := str.Read(buf)
+		if err != nil {
+			if err == io.EOF {
+				return
+			}
+			if c.logger != nil {
+				c.logger.Debug("reading QPACK encoder stream failed", "error", err)
+			}
+			return
+		}
+		if n > 0 {
+			if err := c.qpackEncoderInstructionHandler(buf[:n]); err != nil {
+				if c.logger != nil {
+					c.logger.Debug("processing QPACK encoder instructions failed", "error", err)
+				}
+				c.CloseWithError(quic.ApplicationErrorCode(ErrCodeQPACKDecompressionFailed), "")
+				return
+			}
+		}
+	}
+}
 
 // GREASE frame type - using consistent value like Chrome
 // Formula: 0x1f * N + 0x21, using N=1 gives 0x40
