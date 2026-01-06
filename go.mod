@@ -5,7 +5,7 @@ go 1.24.0
 require (
 	github.com/quic-go/qpack v0.6.0
 	github.com/sardanioss/http v1.1.0
-	github.com/sardanioss/utls v1.9.0
+	github.com/sardanioss/utls v1.9.1-0.20260106101921-55c5f50f21a7
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/mock v0.5.2
 	golang.org/x/crypto v0.46.0
@@ -34,5 +34,3 @@ tool (
 	github.com/jordanlewis/gcassert/cmd/gcassert
 	go.uber.org/mock/mockgen
 )
-
-replace github.com/sardanioss/utls => ../utls
