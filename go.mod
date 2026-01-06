@@ -34,3 +34,5 @@ tool (
 	github.com/jordanlewis/gcassert/cmd/gcassert
 	go.uber.org/mock/mockgen
 )
+
+replace github.com/sardanioss/utls => ../utls

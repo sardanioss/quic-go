@@ -126,6 +126,7 @@ func populateConfig(config *Config) *Config {
 		Allow0RTT:                        config.Allow0RTT,
 		Tracer:                           config.Tracer,
 		ClientHelloID:                    config.ClientHelloID,
+		CachedClientHelloSpec:            config.CachedClientHelloSpec,
 		ECHConfigList:                    config.ECHConfigList,
 		DisableClientHelloScrambling:     config.DisableClientHelloScrambling,
 		ChromeStyleInitialPackets:        config.ChromeStyleInitialPackets,
