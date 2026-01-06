@@ -490,6 +490,7 @@ var newClientConnection = func(
 		logger,
 		s.version,
 		s.config.ClientHelloID,
+		s.config.CachedClientHelloSpec,
 		s.config.ECHConfigList,
 	)
 	s.cryptoStreamHandler = cs

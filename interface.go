@@ -206,6 +206,13 @@ type Config struct {
 	// This is only used for client connections.
 	ClientHelloID *utls.ClientHelloID
 
+	// CachedClientHelloSpec is a pre-generated ClientHelloSpec for TLS fingerprinting.
+	// When set, this spec is used instead of generating a new one from ClientHelloID.
+	// This allows caching the shuffled TLS extension order across connections,
+	// matching Chrome's behavior of shuffling once per session, not per connection.
+	// Takes precedence over ClientHelloID if both are set.
+	CachedClientHelloSpec *utls.ClientHelloSpec
+
 	// ECHConfigList is a serialized ECHConfigList for Encrypted Client Hello.
 	// If provided, clients will attempt to connect using ECH.
 	// This should be fetched from DNS HTTPS records.
