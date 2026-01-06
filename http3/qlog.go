@@ -5,7 +5,7 @@ import (
 	"github.com/sardanioss/quic-go/http3/qlog"
 	"github.com/sardanioss/quic-go/qlogwriter"
 
-	"github.com/quic-go/qpack"
+	"github.com/sardanioss/qpack"
 )
 
 func maybeQlogInvalidHeadersFrame(qlogger qlogwriter.Recorder, streamID quic.StreamID, l uint64) {

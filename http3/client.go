@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/quic-go/qpack"
+	"github.com/sardanioss/qpack"
 	"github.com/sardanioss/quic-go"
 	"github.com/sardanioss/quic-go/http3/qlog"
 	"github.com/sardanioss/quic-go/qlogwriter"
@@ -119,6 +119,8 @@ func newClientConn(
 		qlogger,
 		c.logger,
 	)
+	// Set the QPACK encoder instruction handler to enable dynamic table support
+	c.rawConn.qpackEncoderInstructionHandler = c.decoder.ProcessEncoderInstructions
 	// send the SETTINGs frame, using 0-RTT data, if possible
 	go func() {
 		// Extract QPACK settings from AdditionalSettings for Chrome-like order
