@@ -3,8 +3,8 @@ module github.com/sardanioss/quic-go
 go 1.24.0
 
 require (
-	github.com/sardanioss/qpack v0.6.1
 	github.com/sardanioss/http v1.1.0
+	github.com/sardanioss/qpack v0.6.1
 	github.com/sardanioss/utls v1.9.1
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/mock v0.5.2

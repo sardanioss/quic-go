@@ -257,7 +257,7 @@ func (t *Transport) dial(ctx context.Context, addr net.Addr, host string, tlsCon
 		newSendConn(t.conn, addr, packetInfo{}, utils.DefaultLogger),
 		tlsConf,
 		conf,
-		0,
+		1, // Chrome starts packet numbers at 1, not 0
 		false,
 		use0RTT,
 		conf.Versions[0],
