@@ -44,8 +44,12 @@ const (
 	activeConnectionIDLimitParameterID         transportParameterID = 0xe
 	initialSourceConnectionIDParameterID       transportParameterID = 0xf
 	retrySourceConnectionIDParameterID         transportParameterID = 0x10
+	// RFC 9368 version_information
+	versionInformationParameterID transportParameterID = 0x11
 	// RFC 9221
 	maxDatagramFrameSizeParameterID transportParameterID = 0x20
+	// Google's custom version parameter
+	googleVersionParameterID transportParameterID = 0x4752
 	// https://datatracker.ietf.org/doc/draft-ietf-quic-reliable-stream-reset/06/
 	resetStreamAtParameterID transportParameterID = 0x17f7586d2cb571
 	// https://datatracker.ietf.org/doc/draft-ietf-quic-ack-frequency/11/
@@ -371,19 +375,25 @@ func (p *TransportParameters) readNumericTransportParameter(b []byte, paramID tr
 }
 
 // chromeTransportParameterOrder is the order Chrome uses for transport parameters
+// Based on real Chrome 143 captures - Chrome does NOT send active_connection_id_limit
+// Order: initial_max_streams_bidi → max_idle_timeout → initial_source_connection_id →
+//        max_datagram_frame_size → GREASE → bidi_remote → streams_uni → stream_data_uni →
+//        bidi_local → google_version → version_information → max_udp → initial_max_data
 var chromeTransportParameterOrder = []transportParameterID{
-	initialMaxDataParameterID,                 // 0x4
-	initialMaxStreamDataBidiLocalParameterID,  // 0x5
-	initialMaxStreamDataBidiRemoteParameterID, // 0x6
-	initialMaxStreamDataUniParameterID,        // 0x7
-	initialMaxStreamsBidiParameterID,          // 0x8
-	initialMaxStreamsUniParameterID,           // 0x9
-	maxIdleTimeoutParameterID,                 // 0x1
-	maxUDPPayloadSizeParameterID,              // 0x3
-	disableActiveMigrationParameterID,         // 0xc
-	activeConnectionIDLimitParameterID,        // 0xe
-	initialSourceConnectionIDParameterID,      // 0xf
-	maxDatagramFrameSizeParameterID,           // 0x20
+	initialMaxStreamsBidiParameterID,          // 0x8 - initial_max_streams_bidi
+	maxIdleTimeoutParameterID,                 // 0x1 - max_idle_timeout
+	initialSourceConnectionIDParameterID,      // 0xf - initial_source_connection_id
+	maxDatagramFrameSizeParameterID,           // 0x20 - max_datagram_frame_size
+	// GREASE is inserted here by the marshal function
+	initialMaxStreamDataBidiRemoteParameterID, // 0x6 - bidi_remote
+	initialMaxStreamsUniParameterID,           // 0x9 - streams_uni
+	initialMaxStreamDataUniParameterID,        // 0x7 - stream_data_uni
+	initialMaxStreamDataBidiLocalParameterID,  // 0x5 - bidi_local
+	googleVersionParameterID,                  // 0x4752 - google_version
+	versionInformationParameterID,             // 0x11 - version_information
+	maxUDPPayloadSizeParameterID,              // 0x3 - max_udp_payload_size (Chrome sends 1472)
+	initialMaxDataParameterID,                 // 0x4 - initial_max_data
+	// Note: active_connection_id_limit and disable_active_migration are NOT sent by Chrome
 }
 
 // firefoxTransportParameterOrder is the order Firefox uses for transport parameters
@@ -420,21 +430,28 @@ func (p *TransportParameters) Marshal(pers protocol.Perspective) []byte {
 		return p.marshalDefault(pers)
 	}
 
-	// Add GREASE value at the beginning for Chrome mode
-	if p.OrderMode == TransportParameterOrderChrome {
-		random := make([]byte, 18)
-		rand.Read(random)
-		// Chrome uses GREASE values: 27 + 31*n where n is 0-255
-		b = quicvarint.Append(b, 27+31*uint64(random[0]))
-		length := random[1] % 16
-		b = quicvarint.Append(b, uint64(length))
-		b = append(b, random[2:2+length]...)
-	}
-
 	// Marshal parameters in specified order
+	// For Chrome mode, GREASE is inserted after max_datagram_frame_size
 	written := make(map[transportParameterID]bool)
+	greaseInserted := false
 	for _, paramID := range order {
 		b = p.marshalParam(b, paramID, pers, written)
+		// Insert GREASE after max_datagram_frame_size for Chrome mode
+		if p.OrderMode == TransportParameterOrderChrome && paramID == maxDatagramFrameSizeParameterID && !greaseInserted {
+			greaseInserted = true
+			random := make([]byte, 24)
+			rand.Read(random)
+			// Chrome uses GREASE values: 27 + 31*N where N is very large
+			// Generate N in range that produces 15-17 digit GREASE IDs like Chrome
+			n := uint64(100000000000000) + uint64(random[0])<<48 + uint64(random[1])<<40 +
+				uint64(random[2])<<32 + uint64(random[3])<<24 + uint64(random[4])<<16 +
+				uint64(random[5])<<8 + uint64(random[6])
+			n = n % 900000000000000 + 100000000000000 // Ensure in range 100T-1000T
+			b = quicvarint.Append(b, 27+31*n)
+			length := random[7] % 16
+			b = quicvarint.Append(b, uint64(length))
+			b = append(b, random[8:8+length]...)
+		}
 	}
 
 	// Add any server-specific parameters not in the order list
@@ -460,8 +477,13 @@ func (p *TransportParameters) Marshal(pers protocol.Perspective) []byte {
 	}
 
 	// Add additional client parameters
+	// For Chrome mode, skip params already written in order (google_version, version_information)
 	if pers == protocol.PerspectiveClient && len(AdditionalTransportParametersClient) > 0 {
 		for k, v := range AdditionalTransportParametersClient {
+			// Skip params that were already written in the ordered section
+			if written[transportParameterID(k)] {
+				continue
+			}
 			b = quicvarint.Append(b, k)
 			b = quicvarint.Append(b, uint64(len(v)))
 			b = append(b, v...)
@@ -521,9 +543,12 @@ func (p *TransportParameters) marshalParam(b []byte, paramID transportParameterI
 			return quicvarint.Append(b, 0)
 		}
 	case activeConnectionIDLimitParameterID:
-		// Chrome always sends this, even if default
-		written[paramID] = true
-		return p.marshalVarintParam(b, paramID, p.ActiveConnectionIDLimit)
+		// Chrome does NOT send active_connection_id_limit - skip it for Chrome mode
+		// For other modes, only send if different from default
+		if p.OrderMode != TransportParameterOrderChrome && p.ActiveConnectionIDLimit != protocol.DefaultActiveConnectionIDLimit {
+			written[paramID] = true
+			return p.marshalVarintParam(b, paramID, p.ActiveConnectionIDLimit)
+		}
 	case initialSourceConnectionIDParameterID:
 		written[paramID] = true
 		b = quicvarint.Append(b, uint64(paramID))
@@ -544,6 +569,26 @@ func (p *TransportParameters) marshalParam(b []byte, paramID transportParameterI
 		if p.MinAckDelay != nil {
 			written[paramID] = true
 			return p.marshalVarintParam(b, paramID, uint64(*p.MinAckDelay/time.Microsecond))
+		}
+	case googleVersionParameterID:
+		// google_version (0x4752) - only for Chrome mode, get from additional params
+		if p.OrderMode == TransportParameterOrderChrome {
+			if v, ok := AdditionalTransportParametersClient[uint64(googleVersionParameterID)]; ok {
+				written[paramID] = true
+				b = quicvarint.Append(b, uint64(paramID))
+				b = quicvarint.Append(b, uint64(len(v)))
+				return append(b, v...)
+			}
+		}
+	case versionInformationParameterID:
+		// version_information (0x11) - only for Chrome mode, get from additional params
+		if p.OrderMode == TransportParameterOrderChrome {
+			if v, ok := AdditionalTransportParametersClient[uint64(versionInformationParameterID)]; ok {
+				written[paramID] = true
+				b = quicvarint.Append(b, uint64(paramID))
+				b = quicvarint.Append(b, uint64(len(v)))
+				return append(b, v...)
+			}
 		}
 	}
 	return b

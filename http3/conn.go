@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"maps"
+	"math/rand"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -342,13 +343,20 @@ func (c *rawConn) handleQPACKEncoderStream(str *quic.ReceiveStream) {
 	}
 }
 
-// GREASE frame type - using consistent value like Chrome
-// Formula: 0x1f * N + 0x21, using N=1 gives 0x40
-const greaseFrameType = 0x1f*1 + 0x21 // 0x40
+// generateGreaseFrameType generates a random GREASE frame type.
+// GREASE frame types are of the form 0x1f * N + 0x21 where N is random.
+// Chrome uses large random N values, producing frame types like 1508608275.
+func generateGreaseFrameType() uint64 {
+	// Generate a large random N value (Chrome uses values that produce 9-10 digit frame types)
+	// N range: 1000000 to 100000000 produces realistic Chrome-like values
+	n := uint64(1000000 + rand.Intn(99000000))
+	return 0x1f*n + 0x21
+}
 
 // appendGreaseFrame appends a GREASE frame to the byte slice.
 // GREASE frames help prevent implementation bugs from ossifying protocol extensions.
 func appendGreaseFrame(b []byte) []byte {
+	greaseFrameType := generateGreaseFrameType()
 	b = quicvarint.Append(b, greaseFrameType)
 	// Chrome sends empty GREASE frames (length 0)
 	b = quicvarint.Append(b, 0) // frame length

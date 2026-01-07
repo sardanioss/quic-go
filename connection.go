@@ -311,7 +311,7 @@ var newConnection = func(
 	s.preSetup()
 	s.rttStats.SetInitialRTT(rtt)
 	s.sentPacketHandler = ackhandler.NewSentPacketHandler(
-		0,
+		1, // Chrome starts at packet number 1, not 0
 		protocol.ByteCount(s.config.InitialPacketSize),
 		s.rttStats,
 		&s.connStats,
