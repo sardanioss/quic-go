@@ -27,6 +27,8 @@ github.com/sardanioss/http v1.1.0 h1:i+dMfvlD51TCWRyfiXjrdi/R0+FLCloEQB4XsBStmuU
 github.com/sardanioss/http v1.1.0/go.mod h1:Bn2qBFItWB9mLCxWW+tnwDe0stlrxhXaVZKtrLn4dc0=
 github.com/sardanioss/net v1.1.0 h1:70N+rulliNxjf7aqs63G40TPjjkeaSZyj4zY4xIVg+I=
 github.com/sardanioss/net v1.1.0/go.mod h1:vXglhDyVX/Ii73SZV93E6x4fSmOFtJGZzZqKK0KZ4uI=
+github.com/sardanioss/qpack v0.6.1 h1:HHTcwh8ZCIZM/WWK57OHYvR+kyzvDk62IyTCbWG9S4c=
+github.com/sardanioss/qpack v0.6.1/go.mod h1:RSs0PpIh6d66DzAdANPGs9eHV/AbROwpW/Egpy0kIvQ=
 github.com/sardanioss/utls v1.9.1 h1:F5D45xi4xvoPeMlb24dxyM+cgnl4uuBPRe6C2qS0/mY=
 github.com/sardanioss/utls v1.9.1/go.mod h1:D2VupP5ZCEaQ9ZYIjXPJh4NmqjTlu9oMzGeyybQWCN4=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=

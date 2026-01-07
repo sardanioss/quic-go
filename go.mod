@@ -14,9 +14,6 @@ require (
 	golang.org/x/sys v0.39.0
 )
 
-// Use local fork with dynamic table support
-replace github.com/sardanioss/qpack => /home/saksham/own_tools/qpack
-
 require (
 	github.com/andybalholm/brotli v1.1.1 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
