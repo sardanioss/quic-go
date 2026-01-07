@@ -4,8 +4,8 @@ go 1.24.0
 
 require (
 	github.com/sardanioss/http v1.1.0
-	github.com/sardanioss/qpack v0.6.1
-	github.com/sardanioss/utls v1.9.1
+	github.com/sardanioss/qpack v0.6.2
+	github.com/sardanioss/utls v1.9.3
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/mock v0.5.2
 	golang.org/x/crypto v0.46.0
