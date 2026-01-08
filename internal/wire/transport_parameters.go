@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	mrand "math/rand"
 	"net/netip"
 	"slices"
 	"time"
@@ -114,6 +115,12 @@ type TransportParameters struct {
 	// CustomOrder specifies the order when OrderMode is TransportParameterOrderCustom
 	// Use transport parameter IDs (e.g., 0x1 for max_idle_timeout, 0x4 for initial_max_data)
 	CustomOrder []transportParameterID
+	// ShuffleSeed enables shuffling of transport parameter order.
+	// When non-zero and OrderMode is TransportParameterOrderChrome,
+	// the Chrome order is shuffled using this seed (deterministic per seed).
+	// Chrome shuffles transport parameters per session - use the same seed as TLS
+	// extension shuffle to maintain consistent fingerprint within a session.
+	ShuffleSeed int64
 }
 
 // Unmarshal the transport parameters
@@ -409,6 +416,29 @@ var firefoxTransportParameterOrder = []transportParameterID{
 	initialSourceConnectionIDParameterID,      // 0xf
 }
 
+// shuffleTransportParameterOrder shuffles the transport parameter order using a deterministic seed.
+// This matches Chrome's behavior of shuffling transport parameters per session.
+// Some parameters have special positions that should not be shuffled:
+// - GREASE is inserted separately after max_datagram_frame_size
+// - initial_source_connection_id should remain relatively stable
+func shuffleTransportParameterOrder(order []transportParameterID, seed int64) []transportParameterID {
+	// Create a copy to avoid modifying the original slice
+	shuffled := make([]transportParameterID, len(order))
+	copy(shuffled, order)
+
+	// Use deterministic random source based on seed
+	rng := mrand.New(mrand.NewSource(seed))
+
+	// Shuffle using Fisher-Yates algorithm
+	// Skip initial_source_connection_id (index 2) and special params like google_version/version_information
+	// We shuffle all the "regular" parameters
+	rng.Shuffle(len(shuffled), func(i, j int) {
+		shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
+	})
+
+	return shuffled
+}
+
 // Marshal the transport parameters
 func (p *TransportParameters) Marshal(pers protocol.Perspective) []byte {
 	// Typical Transport Parameters consume around 110 bytes, depending on the exact values,
@@ -421,6 +451,10 @@ func (p *TransportParameters) Marshal(pers protocol.Perspective) []byte {
 	switch p.OrderMode {
 	case TransportParameterOrderChrome:
 		order = chromeTransportParameterOrder
+		// Apply shuffling if seed is non-zero
+		if p.ShuffleSeed != 0 {
+			order = shuffleTransportParameterOrder(order, p.ShuffleSeed)
+		}
 	case TransportParameterOrderFirefox:
 		order = firefoxTransportParameterOrder
 	case TransportParameterOrderCustom:

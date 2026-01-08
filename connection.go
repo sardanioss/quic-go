@@ -347,6 +347,7 @@ var newConnection = func(
 		RetrySourceConnectionID:   retrySrcConnID,
 		EnableResetStreamAt:       conf.EnableStreamResetPartialDelivery,
 		OrderMode:                 s.config.TransportParameterOrder,
+		ShuffleSeed:               s.config.TransportParameterShuffleSeed,
 	}
 	if s.config.EnableDatagrams {
 		params.MaxDatagramFrameSize = wire.MaxDatagramSize
@@ -471,6 +472,7 @@ var newClientConnection = func(
 		InitialSourceConnectionID: srcConnID,
 		EnableResetStreamAt:       conf.EnableStreamResetPartialDelivery,
 		OrderMode:                 s.config.TransportParameterOrder,
+		ShuffleSeed:               s.config.TransportParameterShuffleSeed,
 	}
 	if s.config.EnableDatagrams {
 		params.MaxDatagramFrameSize = wire.MaxDatagramSize

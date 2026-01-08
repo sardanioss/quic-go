@@ -246,6 +246,13 @@ type Config struct {
 	// CustomTransportParameterOrder specifies the order when TransportParameterOrder is TransportParameterOrderCustom.
 	// Use transport parameter IDs (e.g., 0x1 for max_idle_timeout, 0x4 for initial_max_data).
 	CustomTransportParameterOrder []uint64
+
+	// TransportParameterShuffleSeed enables shuffling of transport parameter order.
+	// When non-zero and TransportParameterOrder is TransportParameterOrderChrome,
+	// the Chrome order is shuffled using this seed (deterministic per seed).
+	// Chrome shuffles transport parameters per session - use the same seed as TLS
+	// extension shuffle to maintain consistent fingerprint within a session.
+	TransportParameterShuffleSeed int64
 }
 
 // ClientInfo contains information about an incoming connection attempt.
