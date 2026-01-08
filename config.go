@@ -132,5 +132,6 @@ func populateConfig(config *Config) *Config {
 		ChromeStyleInitialPackets:        config.ChromeStyleInitialPackets,
 		TransportParameterOrder:          config.TransportParameterOrder,
 		CustomTransportParameterOrder:    config.CustomTransportParameterOrder,
+		TransportParameterShuffleSeed:    config.TransportParameterShuffleSeed,
 	}
 }
