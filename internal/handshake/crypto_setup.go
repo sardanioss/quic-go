@@ -75,9 +75,9 @@ func (w *uquicWrapper) SendSessionTicket(opts tls.QUICSessionTicketOptions) erro
 }
 
 func (w *uquicWrapper) StoreSession(session *tls.SessionState) error {
-	// Session resumption with uTLS QUIC requires session state conversion
-	// For now, we skip storing sessions - this can be enhanced later
-	return nil
+	// tls and utls are both aliased to github.com/sardanioss/utls
+	// so *tls.SessionState and *utls.SessionState are the same type
+	return w.conn.StoreSession(session)
 }
 
 func (w *uquicWrapper) Close() error {
@@ -114,6 +114,7 @@ func tlsConfigToUtls(cfg *tls.Config, echConfigList []byte) *utls.Config {
 		InsecureSkipVerify:             cfg.InsecureSkipVerify,
 		CipherSuites:                   cfg.CipherSuites,
 		SessionTicketsDisabled:         cfg.SessionTicketsDisabled,
+		ClientSessionCache:             cfg.ClientSessionCache, // Enable session resumption
 		MinVersion:                     cfg.MinVersion,
 		MaxVersion:                     cfg.MaxVersion,
 		Renegotiation:                  utls.RenegotiationSupport(cfg.Renegotiation),
