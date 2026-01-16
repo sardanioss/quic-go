@@ -106,6 +106,7 @@ func (w *uquicWrapper) ConnectionState() tls.ConnectionState {
 
 // tlsConfigToUtls converts tls.Config to utls.Config for uTLS usage
 func tlsConfigToUtls(cfg *tls.Config, echConfigList []byte) *utls.Config {
+	fmt.Printf("[DEBUG crypto_setup] tlsConfigToUtls: echConfigList len=%d, serverName=%s\n", len(echConfigList), cfg.ServerName)
 	ucfg := &utls.Config{
 		Rand:                           cfg.Rand,
 		Time:                           cfg.Time,
@@ -182,6 +183,8 @@ func NewCryptoSetupClient(
 	cachedClientHelloSpec *utls.ClientHelloSpec,
 	echConfigList []byte,
 ) CryptoSetup {
+	fmt.Printf("[DEBUG crypto_setup] NewCryptoSetupClient: cachedSpec=%v, clientHelloID=%v, echConfigList len=%d\n",
+		cachedClientHelloSpec != nil, clientHelloID != nil, len(echConfigList))
 	cs := newCryptoSetup(
 		connID,
 		tp,
