@@ -106,7 +106,6 @@ func (w *uquicWrapper) ConnectionState() tls.ConnectionState {
 
 // tlsConfigToUtls converts tls.Config to utls.Config for uTLS usage
 func tlsConfigToUtls(cfg *tls.Config, echConfigList []byte) *utls.Config {
-	fmt.Printf("[DEBUG crypto_setup] tlsConfigToUtls: echConfigList len=%d, serverName=%s\n", len(echConfigList), cfg.ServerName)
 	ucfg := &utls.Config{
 		Rand:                           cfg.Rand,
 		Time:                           cfg.Time,
@@ -183,8 +182,6 @@ func NewCryptoSetupClient(
 	cachedClientHelloSpec *utls.ClientHelloSpec,
 	echConfigList []byte,
 ) CryptoSetup {
-	fmt.Printf("[DEBUG crypto_setup] NewCryptoSetupClient: cachedSpec=%v, clientHelloID=%v, echConfigList len=%d\n",
-		cachedClientHelloSpec != nil, clientHelloID != nil, len(echConfigList))
 	cs := newCryptoSetup(
 		connID,
 		tp,
@@ -358,11 +355,9 @@ func (h *cryptoSetup) StartHandshake(ctx context.Context) error {
 	}
 	if h.perspective == protocol.PerspectiveClient {
 		if h.zeroRTTSealer != nil && h.zeroRTTParameters != nil {
-			fmt.Printf("[DEBUG 0RTT] Doing 0-RTT! zeroRTTSealer=%v, zeroRTTParameters=%v\n", h.zeroRTTSealer != nil, h.zeroRTTParameters != nil)
 			h.logger.Debugf("Doing 0-RTT.")
 			h.events = append(h.events, Event{Kind: EventRestoredTransportParameters, TransportParameters: h.zeroRTTParameters})
 		} else {
-			fmt.Printf("[DEBUG 0RTT] Not doing 0-RTT. Has sealer: %t, has params: %t\n", h.zeroRTTSealer != nil, h.zeroRTTParameters != nil)
 			h.logger.Debugf("Not doing 0-RTT. Has sealer: %t, has params: %t", h.zeroRTTSealer != nil, h.zeroRTTParameters != nil)
 		}
 	}
@@ -400,7 +395,6 @@ func (h *cryptoSetup) handleMessage(data []byte, encLevel protocol.EncryptionLev
 }
 
 func (h *cryptoSetup) handleEvent(ev tls.QUICEvent) (err error) {
-	fmt.Printf("[DEBUG quic] handleEvent: kind=%d\n", ev.Kind)
 	switch ev.Kind {
 	case tls.QUICNoEvent:
 		return nil
@@ -426,10 +420,8 @@ func (h *cryptoSetup) handleEvent(ev tls.QUICEvent) (err error) {
 		return nil
 	case tls.QUICStoreSession:
 		if ev.SessionState == nil {
-			fmt.Printf("[DEBUG quic] QUICStoreSession event received, but SessionState is nil!\n")
 			return nil
 		}
-		fmt.Printf("[DEBUG quic] QUICStoreSession event received, earlyData=%v\n", ev.SessionState.EarlyData)
 		if h.perspective == protocol.PerspectiveServer {
 			panic("cryptoSetup BUG: unexpected QUICStoreSession event for the server")
 		}
@@ -439,7 +431,6 @@ func (h *cryptoSetup) handleEvent(ev tls.QUICEvent) (err error) {
 		)
 		return h.conn.StoreSession(ev.SessionState)
 	case tls.QUICResumeSession:
-		fmt.Printf("[DEBUG quic] QUICResumeSession event received, earlyData=%v\n", ev.SessionState.EarlyData)
 		var allowEarlyData bool
 		switch h.perspective {
 		case protocol.PerspectiveClient:
@@ -498,23 +489,18 @@ func (h *cryptoSetup) marshalDataForSessionState(earlyData bool) []byte {
 }
 
 func (h *cryptoSetup) handleDataFromSessionState(data []byte, earlyData bool) (allowEarlyData bool) {
-	fmt.Printf("[DEBUG 0RTT] handleDataFromSessionState: earlyData=%v, allow0RTT=%v, data_len=%d\n", earlyData, h.allow0RTT, len(data))
 	tp, err := decodeDataFromSessionState(data, earlyData)
 	if err != nil {
-		fmt.Printf("[DEBUG 0RTT] decodeDataFromSessionState failed: %v\n", err)
 		h.logger.Debugf("Restoring of transport parameters from session ticket failed: %s", err.Error())
 		return
 	}
-	fmt.Printf("[DEBUG 0RTT] decodeDataFromSessionState: tp=%v\n", tp != nil)
 	// The session ticket might have been saved from a connection that allowed 0-RTT,
 	// and therefore contain transport parameters.
 	// Only use them if 0-RTT is actually used on the new connection.
 	if tp != nil && h.allow0RTT {
 		h.zeroRTTParameters = tp
-		fmt.Printf("[DEBUG 0RTT] Setting zeroRTTParameters, returning true\n")
 		return true
 	}
-	fmt.Printf("[DEBUG 0RTT] NOT setting zeroRTTParameters: tp=%v, allow0RTT=%v\n", tp != nil, h.allow0RTT)
 	return false
 }
 
@@ -662,12 +648,10 @@ func (h *cryptoSetup) setReadKey(el tls.QUICEncryptionLevel, suiteID uint16, tra
 }
 
 func (h *cryptoSetup) setWriteKey(el tls.QUICEncryptionLevel, suiteID uint16, trafficSecret []byte) {
-	fmt.Printf("[DEBUG 0RTT] setWriteKey: level=%d, suiteID=%d\n", el, suiteID)
 	suite := getCipherSuite(suiteID)
 	//nolint:exhaustive // The TLS stack doesn't export Initial keys.
 	switch el {
 	case tls.QUICEncryptionLevelEarly:
-		fmt.Printf("[DEBUG 0RTT] Setting 0-RTT write key!\n")
 		if h.perspective == protocol.PerspectiveServer {
 			panic("Received 0-RTT write key for the server")
 		}
@@ -675,7 +659,6 @@ func (h *cryptoSetup) setWriteKey(el tls.QUICEncryptionLevel, suiteID uint16, tr
 			createAEAD(suite, trafficSecret, h.version),
 			newHeaderProtector(suite, trafficSecret, true, h.version),
 		)
-		fmt.Printf("[DEBUG 0RTT] zeroRTTSealer created: %v\n", h.zeroRTTSealer != nil)
 		if h.logger.Debug() {
 			h.logger.Debugf("Installed 0-RTT Write keys (using %s)", tls.CipherSuiteName(suite.ID))
 		}
