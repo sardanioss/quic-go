@@ -52,10 +52,11 @@ func (w *uquicWrapper) Start(ctx context.Context) error {
 func (w *uquicWrapper) NextEvent() tls.QUICEvent {
 	ev := w.conn.NextEvent()
 	return tls.QUICEvent{
-		Kind:  tls.QUICEventKind(ev.Kind),
-		Level: tls.QUICEncryptionLevel(ev.Level),
-		Data:  ev.Data,
-		Suite: ev.Suite,
+		Kind:         tls.QUICEventKind(ev.Kind),
+		Level:        tls.QUICEncryptionLevel(ev.Level),
+		Data:         ev.Data,
+		Suite:        ev.Suite,
+		SessionState: ev.SessionState, // Preserve SessionState for QUICStoreSession/QUICResumeSession events
 	}
 }
 
@@ -418,6 +419,9 @@ func (h *cryptoSetup) handleEvent(ev tls.QUICEvent) (err error) {
 		h.handshakeComplete()
 		return nil
 	case tls.QUICStoreSession:
+		if ev.SessionState == nil {
+			return nil
+		}
 		if h.perspective == protocol.PerspectiveServer {
 			panic("cryptoSetup BUG: unexpected QUICStoreSession event for the server")
 		}
