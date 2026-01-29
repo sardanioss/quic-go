@@ -121,42 +121,49 @@ func newClientConn(
 	)
 	// Set the QPACK encoder instruction handler to enable dynamic table support
 	c.rawConn.qpackEncoderInstructionHandler = c.decoder.ProcessEncoderInstructions
-	// send the SETTINGs frame, using 0-RTT data, if possible
-	go func() {
-		// Extract QPACK settings from AdditionalSettings for Chrome-like order
-		sf := &settingsFrame{
-			QPACKMaxTableCapacity: -1, // will be set if in additionalSettings
-			MaxFieldSectionSize:   int64(c.maxResponseHeaderBytes),
-			QPACKBlockedStreams:   -1, // will be set if in additionalSettings
-			Datagram:              enableDatagrams,
-			Other:                 make(map[uint64]uint64),
+	// send the SETTINGs frame synchronously to ensure they're sent before any request
+	// Extract QPACK settings from AdditionalSettings for Chrome-like order
+	// Real iOS Safari/Chrome sends only: QPACK_MAX_TABLE_CAPACITY, QPACK_BLOCKED_STREAMS, GREASE
+	// It does NOT send MAX_FIELD_SECTION_SIZE or H3_DATAGRAM in the fingerprint-visible settings
+	sf := &settingsFrame{
+		QPACKMaxTableCapacity: -1, // will be set if in additionalSettings
+		MaxFieldSectionSize:   -1, // Don't send - iOS doesn't include this in visible settings
+		QPACKBlockedStreams:   -1, // will be set if in additionalSettings
+		Datagram:              false, // Don't send H3_DATAGRAM - iOS doesn't include this
+		Other:                 make(map[uint64]uint64),
+	}
+	// Extract QPACK settings and put rest in Other
+	for id, val := range additionalSettings {
+		switch id {
+		case settingQPACKMaxTableCapacity:
+			sf.QPACKMaxTableCapacity = int64(val)
+		case settingQPACKBlockedStreams:
+			sf.QPACKBlockedStreams = int64(val)
+		default:
+			sf.Other[id] = val
 		}
-		// Extract QPACK settings and put rest in Other
-		for id, val := range additionalSettings {
-			switch id {
-			case settingQPACKMaxTableCapacity:
-				sf.QPACKMaxTableCapacity = int64(val)
-			case settingQPACKBlockedStreams:
-				sf.QPACKBlockedStreams = int64(val)
-			default:
-				sf.Other[id] = val
-			}
+	}
+	_, err := c.rawConn.openControlStream(sf)
+	if err != nil {
+		if c.logger != nil {
+			c.logger.Debug("setting up connection failed", "error", err)
 		}
-		_, err := c.rawConn.openControlStream(sf)
-		if err != nil {
-			if c.logger != nil {
-				c.logger.Debug("setting up connection failed", "error", err)
-			}
-			c.conn.CloseWithError(quic.ApplicationErrorCode(ErrCodeInternalError), "")
-			return
-		}
+		c.conn.CloseWithError(quic.ApplicationErrorCode(ErrCodeInternalError), "")
+		return c
+	}
 
-		// Open QPACK encoder stream (Chrome opens this even without dynamic table)
-		c.openQPACKEncoderStream()
+	// Open QPACK encoder stream (Chrome opens this even without dynamic table)
+	c.openQPACKEncoderStream()
 
-		// Open QPACK decoder stream (Chrome opens this even without dynamic table)
-		c.openQPACKDecoderStream()
-	}()
+	// Open QPACK decoder stream (Chrome opens this even without dynamic table)
+	c.openQPACKDecoderStream()
+
+	// Small delay to ensure control/QPACK streams are transmitted before request stream
+	// This ensures the server receives SETTINGS before processing our request
+	// Without this delay, streams may be bundled in the same packet and the server
+	// may not have processed SETTINGS when it receives the request
+	time.Sleep(5 * time.Millisecond)
+
 	return c
 }
 
