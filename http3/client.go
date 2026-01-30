@@ -127,18 +127,22 @@ func newClientConn(
 	// It does NOT send MAX_FIELD_SECTION_SIZE or H3_DATAGRAM in the fingerprint-visible settings
 	sf := &settingsFrame{
 		QPACKMaxTableCapacity: -1, // will be set if in additionalSettings
-		MaxFieldSectionSize:   -1, // Don't send - iOS doesn't include this in visible settings
+		MaxFieldSectionSize:   -1, // will be set if in additionalSettings (Chrome sends, Safari doesn't)
 		QPACKBlockedStreams:   -1, // will be set if in additionalSettings
-		Datagram:              false, // Don't send H3_DATAGRAM - iOS doesn't include this
+		Datagram:              false, // will be set if in additionalSettings (Chrome sends, Safari doesn't)
 		Other:                 make(map[uint64]uint64),
 	}
-	// Extract QPACK settings and put rest in Other
+	// Extract known settings from additionalSettings, put rest in Other (for GREASE etc)
 	for id, val := range additionalSettings {
 		switch id {
 		case settingQPACKMaxTableCapacity:
 			sf.QPACKMaxTableCapacity = int64(val)
 		case settingQPACKBlockedStreams:
 			sf.QPACKBlockedStreams = int64(val)
+		case settingMaxFieldSectionSize:
+			sf.MaxFieldSectionSize = int64(val)
+		case settingDatagram:
+			sf.Datagram = val > 0
 		default:
 			sf.Other[id] = val
 		}
