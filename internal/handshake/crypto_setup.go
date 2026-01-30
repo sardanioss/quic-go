@@ -121,6 +121,7 @@ func tlsConfigToUtls(cfg *tls.Config, echConfigList []byte) *utls.Config {
 		Renegotiation:                  utls.RenegotiationSupport(cfg.Renegotiation),
 		OmitEmptyPsk:                   true, // Required for QUIC presets without session resumption
 		EncryptedClientHelloConfigList: echConfigList,
+		KeyLogWriter:                   cfg.KeyLogWriter, // For TLS key logging (Wireshark)
 	}
 	return ucfg
 }
