@@ -15,9 +15,8 @@ const (
 )
 
 // The default RTT used before an RTT sample is taken.
-// Using 333ms to give PTO of ~666ms, preventing early retransmission for high-latency paths.
-// Chrome uses a similar conservative estimate for the initial RTT.
-const DefaultInitialRTT = 333 * time.Millisecond
+// Chrome uses 100ms, giving PTO of ~200ms for fast retransmission on packet loss.
+const DefaultInitialRTT = 100 * time.Millisecond
 
 // RTTStats provides round-trip statistics
 type RTTStats struct {
