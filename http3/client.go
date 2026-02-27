@@ -162,11 +162,9 @@ func newClientConn(
 	// Open QPACK decoder stream (Chrome opens this even without dynamic table)
 	c.openQPACKDecoderStream()
 
-	// Small delay to ensure control/QPACK streams are transmitted before request stream
-	// This ensures the server receives SETTINGS before processing our request
-	// Without this delay, streams may be bundled in the same packet and the server
-	// may not have processed SETTINGS when it receives the request
-	time.Sleep(5 * time.Millisecond)
+	// Note: No delay needed here. HTTP/3 servers process streams by stream ID order,
+	// and control streams (ID 2, 6, 10) are opened before request streams (ID 0).
+	// Even if bundled in the same packet, QUIC guarantees stream ordering.
 
 	return c
 }
