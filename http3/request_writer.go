@@ -8,6 +8,7 @@ import (
 	"net"
 	http "github.com/sardanioss/http"
 	"github.com/sardanioss/http/httptrace"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -262,20 +263,32 @@ func (w *requestWriter) encodeHeaders(req *http.Request, addGzipHeader bool, tra
 			}
 
 			// Then process any remaining headers not in the order list
+			// Sort them deterministically (matching H2 behavior) instead of random map iteration
+			var remaining []string
 			for k := range req.Header {
 				if k == http.HeaderOrderKey || k == http.PHeaderOrderKey {
 					continue
 				}
 				if !processed[strings.ToLower(k)] {
-					processHeader(k)
+					remaining = append(remaining, k)
 				}
 			}
+			sort.Strings(remaining)
+			for _, k := range remaining {
+				processHeader(k)
+			}
 		} else {
-			// No header order specified, use default map iteration
-			for k, vv := range req.Header {
+			// No header order specified, sort deterministically
+			var keys []string
+			for k := range req.Header {
 				if k == http.HeaderOrderKey || k == http.PHeaderOrderKey {
 					continue
 				}
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				vv := req.Header[k]
 				if strings.EqualFold(k, "host") || strings.EqualFold(k, "content-length") {
 					continue
 				} else if strings.EqualFold(k, "connection") || strings.EqualFold(k, "proxy-connection") ||
