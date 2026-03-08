@@ -8,6 +8,7 @@ import (
 	"net"
 	http "github.com/sardanioss/http"
 	"github.com/sardanioss/http/httptrace"
+	"net/textproto"
 	"sort"
 	"strconv"
 	"strings"
@@ -203,9 +204,14 @@ func (w *requestWriter) encodeHeaders(req *http.Request, addGzipHeader bool, tra
 			if k == http.HeaderOrderKey || k == http.PHeaderOrderKey {
 				return
 			}
-			vv, ok := req.Header[k]
+			// Try canonical form first (Go stores headers as Title-Case)
+			vv, ok := req.Header[textproto.CanonicalMIMEHeaderKey(k)]
 			if !ok {
-				// Try case-insensitive lookup
+				// Try exact key
+				vv, ok = req.Header[k]
+			}
+			if !ok {
+				// Last resort: case-insensitive scan
 				for hk, hvv := range req.Header {
 					if strings.EqualFold(hk, k) {
 						vv = hvv
@@ -348,7 +354,9 @@ func (w *requestWriter) encodeHeaders(req *http.Request, addGzipHeader bool, tra
 	}
 	enumerateHeaders(func(name, value string) {
 		name = strings.ToLower(name)
-		w.encoder.WriteField(qpack.HeaderField{Name: name, Value: value})
+		// Chrome marks cookie and authorization as never-indexed (N=1 bit)
+		sensitive := name == "cookie" || name == "authorization" || name == "proxy-authorization"
+		w.encoder.WriteField(qpack.HeaderField{Name: name, Value: value, Sensitive: sensitive})
 		if traceHeaders {
 			traceWroteHeaderField(trace, name, value)
 		}

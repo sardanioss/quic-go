@@ -162,9 +162,12 @@ func newClientConn(
 	// Open QPACK decoder stream (Chrome opens this even without dynamic table)
 	c.openQPACKDecoderStream()
 
-	// Note: No delay needed here. HTTP/3 servers process streams by stream ID order,
-	// and control streams (ID 2, 6, 10) are opened before request streams (ID 0).
-	// Even if bundled in the same packet, QUIC guarantees stream ordering.
+	// Small delay to ensure control/QPACK streams are transmitted before request stream.
+	// QUIC has no cross-stream-type ordering guarantee: unidirectional streams (control,
+	// QPACK) and bidirectional streams (requests) are independent. Without this delay,
+	// SETTINGS and request HEADERS can be bundled in the same packet, causing servers
+	// like tls3.peet.ws to report settings: null (SETTINGS not yet parsed when request arrives).
+	time.Sleep(5 * time.Millisecond)
 
 	return c
 }
