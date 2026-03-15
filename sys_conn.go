@@ -50,8 +50,8 @@ var _ OOBCapablePacketConn = &net.UDPConn{}
 
 func wrapConn(pc net.PacketConn) (rawConn, error) {
 	// Best-effort: try to increase kernel buffers, silently ignore failures.
-	// On constrained systems (Azure Container Apps, Windows defaults, etc.)
-	// these will fail — the caller or userspace buffering handles it.
+	// On constrained systems the userspace bufferedConn compensates for
+	// small receive buffers, and send buffer size is rarely the bottleneck.
 	setReceiveBuffer(pc)
 	setSendBuffer(pc)
 
@@ -59,27 +59,49 @@ func wrapConn(pc net.PacketConn) (rawConn, error) {
 		SyscallConn() (syscall.RawConn, error)
 	})
 	var supportsDF bool
+	var syscallConn syscall.RawConn
 	if ok {
-		rawConn, err := conn.SyscallConn()
+		var err error
+		syscallConn, err = conn.SyscallConn()
 		if err != nil {
 			return nil, err
 		}
 
 		// only set DF on UDP sockets
 		if _, ok := pc.LocalAddr().(*net.UDPAddr); ok {
-			var err error
-			supportsDF, err = setDF(rawConn)
+			supportsDF, err = setDF(syscallConn)
 			if err != nil {
 				return nil, err
 			}
 		}
 	}
+
+	var rc rawConn
 	c, ok := pc.(OOBCapablePacketConn)
 	if !ok {
 		utils.DefaultLogger.Infof("PacketConn is not a net.UDPConn. Disabling optimizations possible on UDP connections.")
-		return &basicConn{PacketConn: pc, supportsDF: supportsDF}, nil
+		rc = &basicConn{PacketConn: pc, supportsDF: supportsDF}
+	} else {
+		var err error
+		rc, err = newConn(c, supportsDF)
+		if err != nil {
+			return nil, err
+		}
 	}
-	return newConn(c, supportsDF)
+
+	// If the kernel receive buffer is smaller than desired, wrap with
+	// userspace buffering to prevent packet drops during bursts.
+	if syscallConn != nil {
+		rcvBufSize, err := inspectReadBuffer(syscallConn)
+		if err == nil && rcvBufSize > 0 && rcvBufSize < protocol.DesiredReceiveBufferSize {
+			bufSize := computeBufferSize(rcvBufSize)
+			utils.DefaultLogger.Debugf("Kernel UDP rcv buffer %d kiB < desired %d kiB, adding userspace buffer (%d slots)",
+				rcvBufSize/1024, protocol.DesiredReceiveBufferSize/1024, bufSize)
+			rc = newBufferedConn(rc, bufSize)
+		}
+	}
+
+	return rc, nil
 }
 
 // The basicConn is the most trivial implementation of a rawConn.
