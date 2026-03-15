@@ -50,7 +50,8 @@ const (
 	// RFC 9221
 	maxDatagramFrameSizeParameterID transportParameterID = 0x20
 	// Google's custom version parameter
-	googleVersionParameterID transportParameterID = 0x4752
+	googleVersionParameterID             transportParameterID = 0x4752
+	googleConnectionOptionsParameterID   transportParameterID = 0x3128
 	// https://datatracker.ietf.org/doc/draft-ietf-quic-reliable-stream-reset/06/
 	resetStreamAtParameterID transportParameterID = 0x17f7586d2cb571
 	// https://datatracker.ietf.org/doc/draft-ietf-quic-ack-frequency/11/
@@ -397,6 +398,7 @@ var chromeTransportParameterOrder = []transportParameterID{
 	initialMaxStreamDataUniParameterID,        // 0x7 - stream_data_uni
 	initialMaxStreamDataBidiLocalParameterID,  // 0x5 - bidi_local
 	googleVersionParameterID,                  // 0x4752 - google_version
+	googleConnectionOptionsParameterID,        // 0x3128 - google_connection_options
 	versionInformationParameterID,             // 0x11 - version_information
 	maxUDPPayloadSizeParameterID,              // 0x3 - max_udp_payload_size (Chrome sends 1472)
 	initialMaxDataParameterID,                 // 0x4 - initial_max_data
@@ -608,6 +610,16 @@ func (p *TransportParameters) marshalParam(b []byte, paramID transportParameterI
 		// google_version (0x4752) - only for Chrome mode, get from additional params
 		if p.OrderMode == TransportParameterOrderChrome {
 			if v, ok := AdditionalTransportParametersClient[uint64(googleVersionParameterID)]; ok {
+				written[paramID] = true
+				b = quicvarint.Append(b, uint64(paramID))
+				b = quicvarint.Append(b, uint64(len(v)))
+				return append(b, v...)
+			}
+		}
+	case googleConnectionOptionsParameterID:
+		// google_connection_options (0x3128) - only for Chrome mode, get from additional params
+		if p.OrderMode == TransportParameterOrderChrome {
+			if v, ok := AdditionalTransportParametersClient[uint64(googleConnectionOptionsParameterID)]; ok {
 				written[paramID] = true
 				b = quicvarint.Append(b, uint64(paramID))
 				b = quicvarint.Append(b, uint64(len(v)))
