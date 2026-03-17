@@ -253,6 +253,17 @@ type Config struct {
 	// Chrome shuffles transport parameters per session - use the same seed as TLS
 	// extension shuffle to maintain consistent fingerprint within a session.
 	TransportParameterShuffleSeed int64
+
+	// AdditionalTransportParameters are extra QUIC transport parameters sent by the client.
+	// Browser-specific params like google_connection_options (0x3128), google_version (0x4752),
+	// and version_information (0x11) can be set here per-connection instead of globally.
+	// If nil, falls back to the global SetAdditionalTransportParameters value.
+	AdditionalTransportParameters map[uint64][]byte
+
+	// MaxDatagramFrameSize is the max_datagram_frame_size transport parameter value
+	// advertised when EnableDatagrams is true. Chrome uses 65536; the default is 16383.
+	// If 0, falls back to the global SetMaxDatagramSize value.
+	MaxDatagramFrameSize uint64
 }
 
 // ClientInfo contains information about an incoming connection attempt.

@@ -70,10 +70,17 @@ type Transport struct {
 	Conn net.PacketConn
 
 	// The length of the connection ID in bytes.
-	// It can be any value between 1 and 20.
+	// It can be any value between 0 and 20.
 	// Due to the increased risk of collisions, it is not recommended to use connection IDs shorter than 4 bytes.
-	// If unset, a 4 byte connection ID will be used.
+	// If unset (0), a 4 byte connection ID will be used (or the global DefaultConnectionIDLength).
+	// To use zero-length connection IDs (Chrome sends empty SCID), set this to 0
+	// and set AllowZeroLengthConnectionIDs to true.
 	ConnectionIDLength int
+
+	// AllowZeroLengthConnectionIDs allows ConnectionIDLength of 0 to mean
+	// "zero-length CIDs" instead of "use default". Chrome uses zero-length
+	// source connection IDs; Firefox uses 8-byte CIDs.
+	AllowZeroLengthConnectionIDs bool
 
 	// Use for generating new connection IDs.
 	// This allows the application to control of the connection IDs used,
@@ -408,7 +415,7 @@ func (t *Transport) init(allowZeroLengthConnIDs bool) error {
 			t.connIDLen = t.ConnectionIDGenerator.ConnectionIDLen()
 		} else {
 			connIDLen := t.ConnectionIDLength
-			if t.ConnectionIDLength == 0 && !allowZeroLengthConnIDs {
+			if t.ConnectionIDLength == 0 && !allowZeroLengthConnIDs && !t.AllowZeroLengthConnectionIDs {
 				// Use the global DefaultConnectionIDLength (can be set by SetDefaultConnectionIDLength)
 				connIDLen = DefaultConnectionIDLength
 			}

@@ -122,6 +122,10 @@ type TransportParameters struct {
 	// Chrome shuffles transport parameters per session - use the same seed as TLS
 	// extension shuffle to maintain consistent fingerprint within a session.
 	ShuffleSeed int64
+
+	// AdditionalParams are per-connection additional transport parameters.
+	// If non-nil, used instead of the global AdditionalTransportParametersClient.
+	AdditionalParams map[uint64][]byte
 }
 
 // Unmarshal the transport parameters
@@ -448,6 +452,12 @@ func (p *TransportParameters) Marshal(pers protocol.Perspective) []byte {
 	// Allocate 256 bytes, so we won't have to grow the slice in any case.
 	b := make([]byte, 0, 256)
 
+	// Resolve additional params: per-connection field takes priority over global
+	additionalParams := p.AdditionalParams
+	if additionalParams == nil {
+		additionalParams = AdditionalTransportParametersClient
+	}
+
 	// Get the parameter order based on mode
 	var order []transportParameterID
 	switch p.OrderMode {
@@ -471,7 +481,7 @@ func (p *TransportParameters) Marshal(pers protocol.Perspective) []byte {
 	written := make(map[transportParameterID]bool)
 	greaseInserted := false
 	for _, paramID := range order {
-		b = p.marshalParam(b, paramID, pers, written)
+		b = p.marshalParam(b, paramID, pers, written, additionalParams)
 		// Insert GREASE after max_datagram_frame_size for Chrome mode
 		if p.OrderMode == TransportParameterOrderChrome && paramID == maxDatagramFrameSizeParameterID && !greaseInserted {
 			greaseInserted = true
@@ -514,8 +524,8 @@ func (p *TransportParameters) Marshal(pers protocol.Perspective) []byte {
 
 	// Add additional client parameters
 	// For Chrome mode, skip params already written in order (google_version, version_information)
-	if pers == protocol.PerspectiveClient && len(AdditionalTransportParametersClient) > 0 {
-		for k, v := range AdditionalTransportParametersClient {
+	if pers == protocol.PerspectiveClient && len(additionalParams) > 0 {
+		for k, v := range additionalParams {
 			// Skip params that were already written in the ordered section
 			if written[transportParameterID(k)] {
 				continue
@@ -530,7 +540,7 @@ func (p *TransportParameters) Marshal(pers protocol.Perspective) []byte {
 }
 
 // marshalParam marshals a single transport parameter by ID
-func (p *TransportParameters) marshalParam(b []byte, paramID transportParameterID, pers protocol.Perspective, written map[transportParameterID]bool) []byte {
+func (p *TransportParameters) marshalParam(b []byte, paramID transportParameterID, pers protocol.Perspective, written map[transportParameterID]bool, additionalParams map[uint64][]byte) []byte {
 	if written[paramID] {
 		return b
 	}
@@ -609,7 +619,7 @@ func (p *TransportParameters) marshalParam(b []byte, paramID transportParameterI
 	case googleVersionParameterID:
 		// google_version (0x4752) - only for Chrome mode, get from additional params
 		if p.OrderMode == TransportParameterOrderChrome {
-			if v, ok := AdditionalTransportParametersClient[uint64(googleVersionParameterID)]; ok {
+			if v, ok := additionalParams[uint64(googleVersionParameterID)]; ok {
 				written[paramID] = true
 				b = quicvarint.Append(b, uint64(paramID))
 				b = quicvarint.Append(b, uint64(len(v)))
@@ -619,7 +629,7 @@ func (p *TransportParameters) marshalParam(b []byte, paramID transportParameterI
 	case googleConnectionOptionsParameterID:
 		// google_connection_options (0x3128) - only for Chrome mode, get from additional params
 		if p.OrderMode == TransportParameterOrderChrome {
-			if v, ok := AdditionalTransportParametersClient[uint64(googleConnectionOptionsParameterID)]; ok {
+			if v, ok := additionalParams[uint64(googleConnectionOptionsParameterID)]; ok {
 				written[paramID] = true
 				b = quicvarint.Append(b, uint64(paramID))
 				b = quicvarint.Append(b, uint64(len(v)))
@@ -629,7 +639,7 @@ func (p *TransportParameters) marshalParam(b []byte, paramID transportParameterI
 	case versionInformationParameterID:
 		// version_information (0x11) - only for Chrome mode, get from additional params
 		if p.OrderMode == TransportParameterOrderChrome {
-			if v, ok := AdditionalTransportParametersClient[uint64(versionInformationParameterID)]; ok {
+			if v, ok := additionalParams[uint64(versionInformationParameterID)]; ok {
 				written[paramID] = true
 				b = quicvarint.Append(b, uint64(paramID))
 				b = quicvarint.Append(b, uint64(len(v)))
@@ -749,8 +759,14 @@ func (p *TransportParameters) marshalDefault(pers protocol.Perspective) []byte {
 		b = p.marshalVarintParam(b, minAckDelayParameterID, uint64(*p.MinAckDelay/time.Microsecond))
 	}
 
-	if len(AdditionalTransportParametersClient) > 0 {
-		for k, v := range AdditionalTransportParametersClient {
+	// Resolve additional params: per-connection field takes priority over global
+	// Only add additional params for client connections (these are browser-specific)
+	defaultAdditionalParams := p.AdditionalParams
+	if defaultAdditionalParams == nil {
+		defaultAdditionalParams = AdditionalTransportParametersClient
+	}
+	if pers == protocol.PerspectiveClient && len(defaultAdditionalParams) > 0 {
+		for k, v := range defaultAdditionalParams {
 			b = quicvarint.Append(b, k)
 			b = quicvarint.Append(b, uint64(len(v)))
 			b = append(b, v...)

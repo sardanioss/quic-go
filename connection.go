@@ -348,9 +348,14 @@ var newConnection = func(
 		EnableResetStreamAt:       conf.EnableStreamResetPartialDelivery,
 		OrderMode:                 s.config.TransportParameterOrder,
 		ShuffleSeed:               s.config.TransportParameterShuffleSeed,
+		AdditionalParams:          s.config.AdditionalTransportParameters,
 	}
 	if s.config.EnableDatagrams {
-		params.MaxDatagramFrameSize = wire.MaxDatagramSize
+		if s.config.MaxDatagramFrameSize > 0 {
+			params.MaxDatagramFrameSize = protocol.ByteCount(s.config.MaxDatagramFrameSize)
+		} else {
+			params.MaxDatagramFrameSize = wire.MaxDatagramSize
+		}
 	} else {
 		params.MaxDatagramFrameSize = protocol.InvalidByteCount
 	}
@@ -473,9 +478,14 @@ var newClientConnection = func(
 		EnableResetStreamAt:       conf.EnableStreamResetPartialDelivery,
 		OrderMode:                 s.config.TransportParameterOrder,
 		ShuffleSeed:               s.config.TransportParameterShuffleSeed,
+		AdditionalParams:          s.config.AdditionalTransportParameters,
 	}
 	if s.config.EnableDatagrams {
-		params.MaxDatagramFrameSize = wire.MaxDatagramSize
+		if s.config.MaxDatagramFrameSize > 0 {
+			params.MaxDatagramFrameSize = protocol.ByteCount(s.config.MaxDatagramFrameSize)
+		} else {
+			params.MaxDatagramFrameSize = wire.MaxDatagramSize
+		}
 	} else {
 		params.MaxDatagramFrameSize = protocol.InvalidByteCount
 	}
