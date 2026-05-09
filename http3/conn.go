@@ -52,6 +52,17 @@ type rawConn struct {
 	// qpackEncoderInstructionHandler processes QPACK encoder instructions from the peer
 	// This is optional - if nil, encoder instructions are ignored (no dynamic table)
 	qpackEncoderInstructionHandler func([]byte) error
+
+	// controlStrSend is the client-side send-half of the control stream.
+	// Stored after openControlStream so we can lazily write PRIORITY_UPDATE
+	// frames keyed to actual request stream IDs (RFC 9218 §7.1). Real Chrome
+	// emits PRIORITY_UPDATE just before HEADERS for a request, with the
+	// priority field value derived from the request's Sec-Fetch-Dest /
+	// resource type (matches the per-request "priority:" header).
+	controlStrSend       *quic.SendStream
+	controlStrSendMx     sync.Mutex
+	priorityUpdateSentMx sync.Mutex
+	priorityUpdateSent   bool
 }
 
 func newRawConn(
@@ -82,6 +93,11 @@ func (c *rawConn) OpenUniStream() (*quic.SendStream, error) {
 
 // openControlStream opens the control stream and sends the SETTINGS frame.
 // It returns the control stream (needed by the server for sending GOAWAY later).
+//
+// Note: PRIORITY_UPDATE is NOT written here. Chrome emits PRIORITY_UPDATE
+// lazily, just before the HEADERS frame for the first request, with the
+// prioritized_stream_id and priority value matching that request. See
+// SendInitialPriorityUpdate.
 func (c *rawConn) openControlStream(settings *settingsFrame) (*quic.SendStream, error) {
 	str, err := c.conn.OpenUniStream()
 	if err != nil {
@@ -94,8 +110,6 @@ func (c *rawConn) openControlStream(settings *settingsFrame) (*quic.SendStream, 
 	// Add GREASE frame after SETTINGS if enabled (mimics Chrome behavior)
 	if c.sendGreaseFrames {
 		b = appendGreaseFrame(b)
-		// Chrome also sends PRIORITY_UPDATE frame on control stream after GREASE
-		b = appendPriorityUpdateFrame(b)
 	}
 
 	if c.qlogger != nil {
@@ -118,7 +132,76 @@ func (c *rawConn) openControlStream(settings *settingsFrame) (*quic.SendStream, 
 	if _, err := str.Write(b); err != nil {
 		return nil, err
 	}
+	// Stash the send-side so SendInitialPriorityUpdate can write to it later
+	// when the first request stream is opened. This is the only writer to the
+	// control stream after open, so a single mutex on writes is sufficient.
+	c.controlStrSendMx.Lock()
+	c.controlStrSend = str
+	c.controlStrSendMx.Unlock()
 	return str, nil
+}
+
+// SendInitialPriorityUpdate writes a PRIORITY_UPDATE frame on the control
+// stream with the given prioritized_stream_id and priority field value.
+// Idempotent: only the first call (with a stream ID Chrome would actually
+// reference) has effect; subsequent calls are no-ops. Used by the H3 client
+// to mimic Chrome's "PRIORITY_UPDATE just before HEADERS for the first
+// request, value derived from the request's resource type" behavior.
+// priorityValue is e.g. "u=0, i" for documents, "u=1" for scripts, "u=2"
+// for images — the same value the request's "priority:" header carries
+// (RFC 9218 §7.1).
+//
+// Why we skip stream ID 0: real Chrome's first H3 request lands on stream 4
+// because Chrome opens server-bidi-credit-burning streams (or 0-RTT probes
+// on stream 0) before the first real request. Sending PRIORITY_UPDATE for
+// stream 0 is technically valid per RFC 9218 §7.1 (refers to a stream that
+// doesn't exist yet), but H3 fingerprinters silently drop those references
+// because real Chrome never emits them. We mirror Chrome by waiting until
+// the first ID >= 4.
+//
+// Caller must guard with c.sendGreaseFrames so we don't emit PRIORITY_UPDATE
+// for non-Chrome presets that don't ship the GREASE/PRIORITY_UPDATE pair.
+//
+// Returns nil silently if the control stream isn't open yet (early shutdown
+// race) — the failure mode is "we lose one PRIORITY_UPDATE frame" not "the
+// connection breaks."
+func (c *rawConn) SendInitialPriorityUpdate(streamID quic.StreamID, priorityValue string) error {
+	// Skip stream 0 — Chrome's first request lands on stream 4 after the
+	// 0-RTT probe on stream 0 burns the lowest bidi ID.
+	if streamID < 4 {
+		return nil
+	}
+	c.priorityUpdateSentMx.Lock()
+	if c.priorityUpdateSent {
+		c.priorityUpdateSentMx.Unlock()
+		return nil
+	}
+	c.priorityUpdateSent = true
+	c.priorityUpdateSentMx.Unlock()
+
+	c.controlStrSendMx.Lock()
+	str := c.controlStrSend
+	c.controlStrSendMx.Unlock()
+	if str == nil {
+		return nil
+	}
+
+	b := appendPriorityUpdateFrameDynamic(nil, uint64(streamID), priorityValue)
+	_, err := str.Write(b)
+	return err
+}
+
+// appendPriorityUpdateFrameDynamic is the per-request equivalent of
+// appendPriorityUpdateFrame: caller passes the actual stream ID and the
+// resolved priority field value instead of the function hardcoding both.
+func appendPriorityUpdateFrameDynamic(b []byte, streamID uint64, priorityValue string) []byte {
+	b = quicvarint.Append(b, priorityUpdateFrameType)
+	pv := []byte(priorityValue)
+	streamIDLen := quicvarint.Len(streamID)
+	b = quicvarint.Append(b, uint64(streamIDLen)+uint64(len(pv)))
+	b = quicvarint.Append(b, streamID)
+	b = append(b, pv...)
+	return b
 }
 
 func (c *rawConn) TrackStream(str *quic.Stream) *stateTrackingStream {
@@ -366,20 +449,9 @@ func appendGreaseFrame(b []byte) []byte {
 // PRIORITY_UPDATE frame type for request streams (RFC 9218)
 const priorityUpdateFrameType = 0xf0700
 
-// appendPriorityUpdateFrame appends a PRIORITY_UPDATE frame to the byte slice.
-// Chrome sends this frame on the control stream. The frame contains:
-// - Prioritized Element ID (stream ID, varint)
-// - Priority Field Value (structured field value, bytes)
-func appendPriorityUpdateFrame(b []byte) []byte {
-	// Frame type: 0xf0700 (PRIORITY_UPDATE for request streams)
-	b = quicvarint.Append(b, priorityUpdateFrameType)
-	// Chrome sends "u=0, i" as the priority field value
-	// u=0 means urgency 0 (highest), i means incremental
-	priorityValue := []byte("u=0, i")
-	// Frame payload: stream ID 0 (1 byte varint) + priority field value (6 bytes)
-	frameLen := 1 + len(priorityValue)
-	b = quicvarint.Append(b, uint64(frameLen))
-	b = quicvarint.Append(b, 0) // stream ID 0
-	b = append(b, priorityValue...)
-	return b
-}
+// PRIORITY_UPDATE on the control stream is now emitted lazily — see
+// rawConn.SendInitialPriorityUpdate / appendPriorityUpdateFrameDynamic.
+// The previous unconditional appendPriorityUpdateFrame helper used a
+// hardcoded stream_id=4 and "u=0, i" priority, which only matched Chrome
+// for document navigations and silently lost per-resource-type variations
+// the priority_table expressed.

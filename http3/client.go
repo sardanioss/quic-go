@@ -358,6 +358,23 @@ func (c *ClientConn) roundTrip(req *http.Request) (*http.Response, error) {
 		return nil, &errConnUnusable{e: err}
 	}
 
+	// PRIORITY_UPDATE on the control stream — emitted just before HEADERS
+	// for the first request, with the prioritized_stream_id matching the
+	// stream we just opened and the priority field value derived from the
+	// request's "priority:" header (Chrome 9218-priority behavior). Idempotent
+	// across goroutines; the second-and-subsequent calls become no-ops.
+	// Gated on sendGreaseFrames so non-Chrome presets that don't ship the
+	// GREASE/PRIORITY_UPDATE pair stay byte-clean.
+	if c.rawConn.sendGreaseFrames {
+		priorityValue := req.Header.Get("Priority")
+		if priorityValue == "" {
+			// Chrome's default for documents — also the right fallback when the
+			// caller didn't compute a priority_table value.
+			priorityValue = "u=0, i"
+		}
+		_ = c.rawConn.SendInitialPriorityUpdate(str.StreamID(), priorityValue)
+	}
+
 	// Request Cancellation:
 	// This go routine keeps running even after RoundTripOpt() returns.
 	// It is shut down when the application is done processing the body.
