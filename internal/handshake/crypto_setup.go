@@ -122,6 +122,15 @@ func tlsConfigToUtls(cfg *tls.Config, echConfigList []byte) *utls.Config {
 		OmitEmptyPsk:                   true, // Required for QUIC presets without session resumption
 		EncryptedClientHelloConfigList: echConfigList,
 		KeyLogWriter:                   cfg.KeyLogWriter, // For TLS key logging (Wireshark)
+
+		// Certificate verification hooks. This conversion rebuilds the config
+		// field by field, so anything omitted here is silently dropped: a
+		// caller's pinning callback simply never runs on QUIC, and because it
+		// never runs it also never rejects. That fails OPEN, and on a client
+		// that tries HTTP/3 first it means the connection the request actually
+		// uses is the unverified one.
+		VerifyPeerCertificate: cfg.VerifyPeerCertificate,
+		VerifyConnection:      cfg.VerifyConnection,
 	}
 	return ucfg
 }
