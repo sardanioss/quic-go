@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"io"
 	http "github.com/sardanioss/http"
-	"net/http/httptest"
+	"github.com/sardanioss/http/httptest"
 	"testing"
 
 	"github.com/sardanioss/quic-go"

@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"io"
 	http "github.com/sardanioss/http"
-	"net/http/httptest"
+	"github.com/sardanioss/http/httptest"
 	"strings"
 	"testing"
 	"time"

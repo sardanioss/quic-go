@@ -6,7 +6,7 @@ import (
 	"io"
 	"math"
 	http "github.com/sardanioss/http"
-	"net/http/httptest"
+	"github.com/sardanioss/http/httptest"
 	"github.com/sardanioss/http/httptrace"
 	"strings"
 	"testing"

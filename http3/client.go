@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"log/slog"
 	http "github.com/sardanioss/http"
 	"github.com/sardanioss/http/httptrace"
+	"io"
+	"log/slog"
 	"net/textproto"
 	"sync"
 	"time"
@@ -126,9 +126,9 @@ func newClientConn(
 	// Real iOS Safari/Chrome sends only: QPACK_MAX_TABLE_CAPACITY, QPACK_BLOCKED_STREAMS, GREASE
 	// It does NOT send MAX_FIELD_SECTION_SIZE or H3_DATAGRAM in the fingerprint-visible settings
 	sf := &settingsFrame{
-		QPACKMaxTableCapacity: -1, // will be set if in additionalSettings
-		MaxFieldSectionSize:   -1, // will be set if in additionalSettings (Chrome sends, Safari doesn't)
-		QPACKBlockedStreams:   -1, // will be set if in additionalSettings
+		QPACKMaxTableCapacity: -1,    // will be set if in additionalSettings
+		MaxFieldSectionSize:   -1,    // will be set if in additionalSettings (Chrome sends, Safari doesn't)
+		QPACKBlockedStreams:   -1,    // will be set if in additionalSettings
 		Datagram:              false, // will be set if in additionalSettings (Chrome sends, Safari doesn't)
 		Other:                 make(map[uint64]uint64),
 	}
@@ -358,21 +358,21 @@ func (c *ClientConn) roundTrip(req *http.Request) (*http.Response, error) {
 		return nil, &errConnUnusable{e: err}
 	}
 
-	// PRIORITY_UPDATE on the control stream — emitted just before HEADERS
-	// for the first request, with the prioritized_stream_id matching the
-	// stream we just opened and the priority field value derived from the
-	// request's "priority:" header (Chrome 9218-priority behavior). Idempotent
-	// across goroutines; the second-and-subsequent calls become no-ops.
-	// Gated on sendGreaseFrames so non-Chrome presets that don't ship the
-	// GREASE/PRIORITY_UPDATE pair stay byte-clean.
+	// PRIORITY_UPDATE on the control stream, emitted just before this request's
+	// HEADERS and naming the stream we just opened, with the priority field
+	// value taken from the request's "priority:" header. Chrome sends one per
+	// request whose priority differs from the RFC 9218 default, so this is not
+	// a first-request-only thing; MaybeSendPriorityUpdate applies that rule.
+	// Gated on sendGreaseFrames so presets that don't behave like Chrome stay
+	// byte-clean.
 	if c.rawConn.sendGreaseFrames {
 		priorityValue := req.Header.Get("Priority")
 		if priorityValue == "" {
-			// Chrome's default for documents — also the right fallback when the
-			// caller didn't compute a priority_table value.
+			// Chrome emits the frame whether or not it also sent the header, so
+			// fall back to its document value rather than skipping the frame.
 			priorityValue = "u=0, i"
 		}
-		_ = c.rawConn.SendInitialPriorityUpdate(str.StreamID(), priorityValue)
+		_ = c.rawConn.MaybeSendPriorityUpdate(str.StreamID(), priorityValue)
 	}
 
 	// Request Cancellation:

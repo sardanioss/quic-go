@@ -9,7 +9,7 @@ import (
 	"log/slog"
 	"net"
 	http "github.com/sardanioss/http"
-	"net/http/httptest"
+	"github.com/sardanioss/http/httptest"
 	"runtime"
 	"testing"
 	"time"
