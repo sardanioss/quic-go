@@ -35,6 +35,13 @@ type outgoingStreamsMap[T outgoingStream] struct {
 	closeErr error
 }
 
+// Count is the number of streams currently open.
+func (m *outgoingStreamsMap[T]) Count() int {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+	return len(m.streams)
+}
+
 func newOutgoingStreamsMap[T outgoingStream](
 	streamType protocol.StreamType,
 	newStream func(protocol.StreamID) T,

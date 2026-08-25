@@ -3,9 +3,9 @@ package quic
 import (
 	"bytes"
 	"context"
-	tls "github.com/sardanioss/utls"
 	"errors"
 	"fmt"
+	tls "github.com/sardanioss/utls"
 	"io"
 	"net"
 	"reflect"
@@ -861,6 +861,25 @@ func (c *Conn) nextIdleTimeoutTime() monotime.Time {
 // It returns a zero time if no keep-alive should be sent.
 func (c *Conn) nextKeepAliveTime() monotime.Time {
 	if c.config.KeepAlivePeriod == 0 || c.keepAlivePingSent {
+		return 0
+	}
+	// No keep-alive once the last request stream has closed.
+	//
+	// Chromium's QuicPingManager::UpdateDeadlines zeroes both deadlines and
+	// returns early when ShouldKeepConnectionAlive() is false, and SetAlarm
+	// cancels when no deadline is set. For an HTTP/3 session that predicate is
+	// GetNumActiveStreams() + pending_streams_size() > 0.
+	//
+	// Ungated, an idle connection sends an ack-eliciting packet on a metronome
+	// and, because the peer's ACK refreshes the idle timer, never times out
+	// either. Default browsing goes quiet and lets the connection evaporate
+	// with no farewell packet, so a client that pings forever and never dies is
+	// unambiguous from the server side with no capture tooling.
+	//
+	// Deliberately NOT the same as setting KeepAlivePeriod to zero, which would
+	// also remove the PING that is sent while a request is outstanding, and
+	// that one a browser does send. Only the zero-stream case is silenced.
+	if c.streamsMap != nil && c.streamsMap.ActiveBidiStreams() == 0 {
 		return 0
 	}
 	keepAliveInterval := max(c.keepAliveInterval, c.rttStats.PTO(true)*3/2)

@@ -164,6 +164,29 @@ func (m *streamsMap) AcceptUniStream(ctx context.Context) (*ReceiveStream, error
 	return mm.AcceptStream(ctx)
 }
 
+// ActiveBidiStreams is the number of bidirectional streams currently open, in
+// either direction.
+//
+// It is what gates the keep-alive PING. Chromium's QuicPingManager returns
+// early when ShouldKeepConnectionAlive() is false, and for an HTTP/3 session
+// that is GetNumActiveStreams() + pending_streams_size() > 0. Bidirectional is
+// the right question to ask: an HTTP/3 request is a bidirectional stream,
+// while the control and QPACK streams are unidirectional, live for the whole
+// connection, and are excluded from Chromium's count too, being static.
+func (m *streamsMap) ActiveBidiStreams() int {
+	m.mutex.Lock()
+	out, in := m.outgoingBidiStreams, m.incomingBidiStreams
+	m.mutex.Unlock()
+	n := 0
+	if out != nil {
+		n += out.Count()
+	}
+	if in != nil {
+		n += in.Count()
+	}
+	return n
+}
+
 func (m *streamsMap) DeleteStream(id protocol.StreamID) error {
 	switch id.Type() {
 	case protocol.StreamTypeUni:

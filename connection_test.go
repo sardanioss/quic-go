@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	tls "github.com/sardanioss/utls"
 	"errors"
 	"fmt"
+	tls "github.com/sardanioss/utls"
 	"net"
 	"net/netip"
 	"strconv"
@@ -2009,16 +2009,28 @@ func TestConnectionIdleTimeout(t *testing.T) {
 }
 
 func TestConnectionKeepAlive(t *testing.T) {
-	t.Run("enabled", func(t *testing.T) {
-		testConnectionKeepAlive(t, true, true)
+	t.Run("enabled, with a stream open", func(t *testing.T) {
+		testConnectionKeepAlive(t, true, true, true)
+	})
+
+	// A connection with no stream open sends nothing, even with keep-alives
+	// configured. Chromium's QuicPingManager returns early when
+	// ShouldKeepConnectionAlive() is false, and for an HTTP/3 session that is
+	// GetNumActiveStreams() + pending_streams_size() > 0.
+	//
+	// This is not the same as switching keep-alives off, which is the case
+	// below: that also removes the PING sent while a request is outstanding,
+	// and a browser does send that one.
+	t.Run("enabled, no stream open", func(t *testing.T) {
+		testConnectionKeepAlive(t, true, false, false)
 	})
 
 	t.Run("disabled", func(t *testing.T) {
-		testConnectionKeepAlive(t, false, false)
+		testConnectionKeepAlive(t, false, false, false)
 	})
 }
 
-func testConnectionKeepAlive(t *testing.T, enable, expectKeepAlive bool) {
+func testConnectionKeepAlive(t *testing.T, enable, openStream, expectKeepAlive bool) {
 	synctest.Test(t, func(t *testing.T) {
 		var keepAlivePeriod time.Duration
 		if enable {
@@ -2038,8 +2050,15 @@ func testConnectionKeepAlive(t *testing.T, enable, expectKeepAlive bool) {
 		// the idle timeout is set when the transport parameters are received
 		const idleTimeout = 50 * time.Millisecond
 		require.NoError(t, tc.conn.handleTransportParameters(&wire.TransportParameters{
-			MaxIdleTimeout: idleTimeout,
+			MaxIdleTimeout:   idleTimeout,
+			MaxBidiStreamNum: 10,
 		}))
+		if openStream {
+			// The keep-alive is gated on an open bidirectional stream, which
+			// is what an HTTP/3 request is.
+			_, err := tc.conn.OpenStream()
+			require.NoError(t, err)
+		}
 
 		// Receive a packet. This starts the keep-alive timer.
 		buf := getPacketBuffer()
@@ -2079,7 +2098,7 @@ func testConnectionKeepAlive(t *testing.T, enable, expectKeepAlive bool) {
 			case <-time.After(idleTimeout):
 				t.Fatal("timeout")
 			}
-		case false: // if keep-alives are disabled, the connection will run into an idle timeout
+		case false: // with no keep-alive to send, the connection runs into its idle timeout
 			tc.connRunner.EXPECT().Remove(gomock.Any()).AnyTimes()
 			tc.conn.handlePacket(receivedPacket{data: buf.Data, buffer: buf, rcvTime: monotime.Now(), remoteAddr: tc.remoteAddr})
 		}
