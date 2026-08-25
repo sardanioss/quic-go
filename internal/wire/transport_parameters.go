@@ -50,8 +50,8 @@ const (
 	// RFC 9221
 	maxDatagramFrameSizeParameterID transportParameterID = 0x20
 	// Google's custom version parameter
-	googleVersionParameterID             transportParameterID = 0x4752
-	googleConnectionOptionsParameterID   transportParameterID = 0x3128
+	googleVersionParameterID           transportParameterID = 0x4752
+	googleConnectionOptionsParameterID transportParameterID = 0x3128
 	// https://datatracker.ietf.org/doc/draft-ietf-quic-reliable-stream-reset/06/
 	resetStreamAtParameterID transportParameterID = 0x17f7586d2cb571
 	// https://datatracker.ietf.org/doc/draft-ietf-quic-ack-frequency/11/
@@ -389,13 +389,14 @@ func (p *TransportParameters) readNumericTransportParameter(b []byte, paramID tr
 // chromeTransportParameterOrder is the order Chrome uses for transport parameters
 // Based on real Chrome 143 captures - Chrome does NOT send active_connection_id_limit
 // Order: initial_max_streams_bidi → max_idle_timeout → initial_source_connection_id →
-//        max_datagram_frame_size → GREASE → bidi_remote → streams_uni → stream_data_uni →
-//        bidi_local → google_version → version_information → max_udp → initial_max_data
+//
+//	max_datagram_frame_size → GREASE → bidi_remote → streams_uni → stream_data_uni →
+//	bidi_local → google_version → version_information → max_udp → initial_max_data
 var chromeTransportParameterOrder = []transportParameterID{
-	initialMaxStreamsBidiParameterID,          // 0x8 - initial_max_streams_bidi
-	maxIdleTimeoutParameterID,                 // 0x1 - max_idle_timeout
-	initialSourceConnectionIDParameterID,      // 0xf - initial_source_connection_id
-	maxDatagramFrameSizeParameterID,           // 0x20 - max_datagram_frame_size
+	initialMaxStreamsBidiParameterID,     // 0x8 - initial_max_streams_bidi
+	maxIdleTimeoutParameterID,            // 0x1 - max_idle_timeout
+	initialSourceConnectionIDParameterID, // 0xf - initial_source_connection_id
+	maxDatagramFrameSizeParameterID,      // 0x20 - max_datagram_frame_size
 	// GREASE is inserted here by the marshal function
 	initialMaxStreamDataBidiRemoteParameterID, // 0x6 - bidi_remote
 	initialMaxStreamsUniParameterID,           // 0x9 - streams_uni
@@ -422,27 +423,82 @@ var firefoxTransportParameterOrder = []transportParameterID{
 	initialSourceConnectionIDParameterID,      // 0xf
 }
 
-// shuffleTransportParameterOrder shuffles the transport parameter order using a deterministic seed.
-// This matches Chrome's behavior of shuffling transport parameters per session.
-// Some parameters have special positions that should not be shuffled:
-// - GREASE is inserted separately after max_datagram_frame_size
-// - initial_source_connection_id should remain relatively stable
+// shuffleTransportParameterOrder permutes the transport parameter order.
+//
+// quiche does this on EVERY serialization, not once per session:
+//
+//	// Randomize order of sent transport parameters by walking the array
+//	// backwards and swapping each element with a random earlier one.
+//	for (size_t i = parameter_ids.size() - 1; i > 0; i--) {
+//	  std::swap(parameter_ids[i],
+//	            parameter_ids[random->InsecureRandUint64() % (i + 1)]);
+//	}
+//
+// A seed fixed for a transport's lifetime makes every connection that
+// transport opens carry a byte-identical parameter ID sequence. That needs no
+// probability argument to detect: strip the GREASE id, length and payload from
+// two connections and compare what is left. A real client's differ every time.
+//
+// seed of 0 means "fresh randomness per call", which is the shipping
+// behaviour. A non-zero seed is for tests that need a reproducible order.
 func shuffleTransportParameterOrder(order []transportParameterID, seed int64) []transportParameterID {
-	// Create a copy to avoid modifying the original slice
 	shuffled := make([]transportParameterID, len(order))
 	copy(shuffled, order)
 
-	// Use deterministic random source based on seed
-	rng := mrand.New(mrand.NewSource(seed))
-
-	// Shuffle using Fisher-Yates algorithm
-	// Skip initial_source_connection_id (index 2) and special params like google_version/version_information
-	// We shuffle all the "regular" parameters
-	rng.Shuffle(len(shuffled), func(i, j int) {
+	if seed == 0 {
+		var b [8]byte
+		if _, err := rand.Read(b[:]); err == nil {
+			seed = int64(binary.BigEndian.Uint64(b[:]) >> 1)
+		}
+	}
+	mrand.New(mrand.NewSource(seed)).Shuffle(len(shuffled), func(i, j int) {
 		shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
 	})
-
 	return shuffled
+}
+
+// greaseTransportParameterID draws a GREASE transport parameter ID.
+//
+// quiche:
+//
+//	uint64_t grease_id64 = random->RandUint64() % ((1ULL << 62) - 31);
+//	// Make sure grease_id % 31 == 27.
+//	grease_id64 = (grease_id64 / 31) * 31 + 27;
+//
+// Uniform across the whole 62-bit space. Clamping the multiplier so the ID
+// always lands in a narrow decimal band is roughly a 1-in-165 coincidence for
+// a real client, on a value the server reads from one connection.
+func greaseTransportParameterID() uint64 {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return 27
+	}
+	g := binary.BigEndian.Uint64(b[:]) % ((1 << 62) - 31)
+	return (g/31)*31 + 27
+}
+
+// greaseParamPosition picks a uniform slot in [0, n) for the GREASE parameter.
+func greaseParamPosition(n int) int {
+	if n <= 1 {
+		return 0
+	}
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return 0
+	}
+	return int(binary.BigEndian.Uint64(b[:]) % uint64(n))
+}
+
+// appendGreaseParam writes one GREASE transport parameter: a reserved ID and a
+// payload of 0 to 15 random bytes, which is quiche's kMaxGreaseLength of 16
+// taken modulo.
+func appendGreaseParam(b []byte) []byte {
+	random := make([]byte, 16)
+	rand.Read(random)
+	b = quicvarint.Append(b, greaseTransportParameterID())
+	length := random[0] % 16
+	b = quicvarint.Append(b, uint64(length))
+	return append(b, random[1:1+length]...)
 }
 
 // Marshal the transport parameters
@@ -462,11 +518,10 @@ func (p *TransportParameters) Marshal(pers protocol.Perspective) []byte {
 	var order []transportParameterID
 	switch p.OrderMode {
 	case TransportParameterOrderChrome:
-		order = chromeTransportParameterOrder
-		// Apply shuffling if seed is non-zero
-		if p.ShuffleSeed != 0 {
-			order = shuffleTransportParameterOrder(order, p.ShuffleSeed)
-		}
+		// Always shuffled, and by default with fresh randomness per call. A
+		// zero seed used to mean "do not shuffle at all", which emitted the
+		// same fixed table on every connection.
+		order = shuffleTransportParameterOrder(chromeTransportParameterOrder, p.ShuffleSeed)
 	case TransportParameterOrderFirefox:
 		order = firefoxTransportParameterOrder
 	case TransportParameterOrderCustom:
@@ -476,28 +531,26 @@ func (p *TransportParameters) Marshal(pers protocol.Perspective) []byte {
 		return p.marshalDefault(pers)
 	}
 
-	// Marshal parameters in specified order
-	// For Chrome mode, GREASE is inserted after max_datagram_frame_size
+	// Marshal parameters in the chosen order.
+	//
+	// In Chrome mode the GREASE parameter goes in at a RANDOM position rather
+	// than always immediately after max_datagram_frame_size. quiche puts the
+	// GREASE id into the same list it shuffles, so it lands anywhere among the
+	// parameters actually emitted; pinning it next to one specific ID is a
+	// fixed relationship a server sees on every connection.
 	written := make(map[transportParameterID]bool)
-	greaseInserted := false
-	for _, paramID := range order {
-		b = p.marshalParam(b, paramID, pers, written, additionalParams)
-		// Insert GREASE after max_datagram_frame_size for Chrome mode
-		if p.OrderMode == TransportParameterOrderChrome && paramID == maxDatagramFrameSizeParameterID && !greaseInserted {
-			greaseInserted = true
-			random := make([]byte, 24)
-			rand.Read(random)
-			// Chrome uses GREASE values: 27 + 31*N where N is very large
-			// Generate N in range that produces 15-17 digit GREASE IDs like Chrome
-			n := uint64(100000000000000) + uint64(random[0])<<48 + uint64(random[1])<<40 +
-				uint64(random[2])<<32 + uint64(random[3])<<24 + uint64(random[4])<<16 +
-				uint64(random[5])<<8 + uint64(random[6])
-			n = n % 900000000000000 + 100000000000000 // Ensure in range 100T-1000T
-			b = quicvarint.Append(b, 27+31*n)
-			length := random[7] % 16
-			b = quicvarint.Append(b, uint64(length))
-			b = append(b, random[8:8+length]...)
+	greaseAt := -1
+	if p.OrderMode == TransportParameterOrderChrome {
+		greaseAt = greaseParamPosition(len(order) + 1)
+	}
+	for i, paramID := range order {
+		if i == greaseAt {
+			b = appendGreaseParam(b)
 		}
+		b = p.marshalParam(b, paramID, pers, written, additionalParams)
+	}
+	if greaseAt >= len(order) {
+		b = appendGreaseParam(b)
 	}
 
 	// Add any server-specific parameters not in the order list
