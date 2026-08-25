@@ -2,12 +2,14 @@ package http3
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"maps"
-	"math/rand"
+	mrand "math/rand"
 	"net"
 	"strconv"
 	"strings"
@@ -450,24 +452,58 @@ func (c *rawConn) handleQPACKEncoderStream(str *quic.ReceiveStream) {
 	}
 }
 
-// generateGreaseFrameType generates a random GREASE frame type.
-// GREASE frame types are of the form 0x1f * N + 0x21 where N is random.
-// Chrome uses large random N values, producing frame types like 1508608275.
-func generateGreaseFrameType() uint64 {
-	// Generate a large random N value (Chrome uses values that produce 9-10 digit frame types)
-	// N range: 1000000 to 100000000 produces realistic Chrome-like values
-	n := uint64(1000000 + rand.Intn(99000000))
-	return 0x1f*n + 0x21
+// greaseFrame returns the type and payload of one GREASE frame, drawn the way
+// quiche draws them.
+//
+// quiche, HttpEncoder::SerializeGreasingFrame:
+//
+//	uint32_t result;
+//	QuicRandom::GetInstance()->RandBytes(&result, sizeof(result));
+//	frame_type = 0x1fULL * static_cast<uint64_t>(result) + 0x21ULL;
+//
+//	// The payload length is random but within [0, 3].
+//	payload_length = result % 4;
+//
+// Two properties matter and neither survived the previous implementation.
+//
+// The draw is a full uint32, so the frame type spans [0x21, 0x1f*2^32+0x21),
+// which reaches past 1.3e11. Drawing n from [1e6, 1e8) capped the type at
+// about 3.1e9, and a real client lands in that band on roughly 2 percent of
+// connections. A captured Chrome 152 frame type was 119790168723, forty times
+// our old ceiling.
+//
+// The payload length is DERIVED FROM THE SAME DRAW, so a server can invert the
+// frame type and check the length it implies. Sending an empty payload
+// unconditionally contradicts the frame's own type three times in four. Both
+// GREASE frames captured from this client before the fix inverted to a length
+// of 3 and 2 and carried no payload at all.
+func greaseFrame() (frameType uint64, payload []byte) {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// The value only has to be unpredictable, not secret, and a client
+		// that cannot draw here would otherwise emit a fixed frame.
+		binary.LittleEndian.PutUint32(b[:], mrand.Uint32())
+	}
+	result := binary.LittleEndian.Uint32(b[:])
+	frameType = 0x1f*uint64(result) + 0x21
+	if n := result % 4; n > 0 {
+		payload = make([]byte, n)
+		if _, err := rand.Read(payload); err != nil {
+			for i := range payload {
+				payload[i] = byte(mrand.Uint32())
+			}
+		}
+	}
+	return frameType, payload
 }
 
 // appendGreaseFrame appends a GREASE frame to the byte slice.
 // GREASE frames help prevent implementation bugs from ossifying protocol extensions.
 func appendGreaseFrame(b []byte) []byte {
-	greaseFrameType := generateGreaseFrameType()
-	b = quicvarint.Append(b, greaseFrameType)
-	// Chrome sends empty GREASE frames (length 0)
-	b = quicvarint.Append(b, 0) // frame length
-	return b
+	frameType, payload := greaseFrame()
+	b = quicvarint.Append(b, frameType)
+	b = quicvarint.Append(b, uint64(len(payload)))
+	return append(b, payload...)
 }
 
 // PRIORITY_UPDATE frame type for request streams (RFC 9218)
