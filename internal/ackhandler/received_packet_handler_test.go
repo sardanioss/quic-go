@@ -13,7 +13,7 @@ import (
 )
 
 func TestGenerateACKsForPacketNumberSpaces(t *testing.T) {
-	handler := NewReceivedPacketHandler(utils.DefaultLogger)
+	handler := NewReceivedPacketHandler(&utils.RTTStats{}, utils.DefaultLogger)
 
 	now := monotime.Now()
 	sendTime := now.Add(-time.Second)
@@ -54,7 +54,7 @@ func TestGenerateACKsForPacketNumberSpaces(t *testing.T) {
 }
 
 func TestReceive0RTTAnd1RTT(t *testing.T) {
-	handler := NewReceivedPacketHandler(utils.DefaultLogger)
+	handler := NewReceivedPacketHandler(&utils.RTTStats{}, utils.DefaultLogger)
 
 	sendTime := monotime.Now().Add(-time.Second)
 
@@ -72,7 +72,7 @@ func TestReceive0RTTAnd1RTT(t *testing.T) {
 }
 
 func TestDropPackets(t *testing.T) {
-	handler := NewReceivedPacketHandler(utils.DefaultLogger)
+	handler := NewReceivedPacketHandler(&utils.RTTStats{}, utils.DefaultLogger)
 
 	sendTime := monotime.Now().Add(-time.Second)
 
@@ -98,7 +98,7 @@ func TestDropPackets(t *testing.T) {
 }
 
 func TestAckRangePruning(t *testing.T) {
-	handler := NewReceivedPacketHandler(utils.DefaultLogger)
+	handler := NewReceivedPacketHandler(&utils.RTTStats{}, utils.DefaultLogger)
 
 	sendTime := monotime.Now()
 	require.NoError(t, handler.ReceivedPacket(1, protocol.ECNNon, protocol.Encryption1RTT, sendTime, true))
@@ -118,7 +118,7 @@ func TestAckRangePruning(t *testing.T) {
 }
 
 func TestPacketDuplicateDetection(t *testing.T) {
-	handler := NewReceivedPacketHandler(utils.DefaultLogger)
+	handler := NewReceivedPacketHandler(&utils.RTTStats{}, utils.DefaultLogger)
 	sendTime := monotime.Now()
 
 	// 1-RTT is tested separately at the end

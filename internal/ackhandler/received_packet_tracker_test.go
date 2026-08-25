@@ -51,7 +51,7 @@ func TestReceivedPacketTrackerGenerateACKs(t *testing.T) {
 }
 
 func TestAppDataReceivedPacketTrackerECN(t *testing.T) {
-	tr := newAppDataReceivedPacketTracker(utils.DefaultLogger)
+	tr := newAppDataReceivedPacketTracker(&utils.RTTStats{}, utils.DefaultLogger)
 
 	require.NoError(t, tr.ReceivedPacket(0, protocol.ECT0, monotime.Now(), true))
 	pn := protocol.PacketNumber(1)
@@ -70,7 +70,7 @@ func TestAppDataReceivedPacketTrackerECN(t *testing.T) {
 }
 
 func TestAppDataReceivedPacketTrackerAckEverySecondPacket(t *testing.T) {
-	tr := newAppDataReceivedPacketTracker(utils.DefaultLogger)
+	tr := newAppDataReceivedPacketTracker(&utils.RTTStats{}, utils.DefaultLogger)
 	require.Nil(t, tr.GetAckFrame(monotime.Now(), true))
 
 	for p := protocol.PacketNumber(1); p <= 20; p++ {
@@ -85,7 +85,7 @@ func TestAppDataReceivedPacketTrackerAckEverySecondPacket(t *testing.T) {
 }
 
 func TestAppDataReceivedPacketTrackerAlarmTimeout(t *testing.T) {
-	tr := newAppDataReceivedPacketTracker(utils.DefaultLogger)
+	tr := newAppDataReceivedPacketTracker(&utils.RTTStats{}, utils.DefaultLogger)
 
 	now := monotime.Now()
 	require.NoError(t, tr.ReceivedPacket(1, protocol.ECNNon, now, false))
@@ -103,7 +103,7 @@ func TestAppDataReceivedPacketTrackerAlarmTimeout(t *testing.T) {
 }
 
 func TestAppDataReceivedPacketTrackerQueuesECNCE(t *testing.T) {
-	tr := newAppDataReceivedPacketTracker(utils.DefaultLogger)
+	tr := newAppDataReceivedPacketTracker(&utils.RTTStats{}, utils.DefaultLogger)
 
 	require.NoError(t, tr.ReceivedPacket(1, protocol.ECNCE, monotime.Now(), true))
 	ack := tr.GetAckFrame(monotime.Now(), true)
@@ -113,7 +113,7 @@ func TestAppDataReceivedPacketTrackerQueuesECNCE(t *testing.T) {
 }
 
 func TestAppDataReceivedPacketTrackerMissingPackets(t *testing.T) {
-	tr := newAppDataReceivedPacketTracker(utils.DefaultLogger)
+	tr := newAppDataReceivedPacketTracker(&utils.RTTStats{}, utils.DefaultLogger)
 
 	now := monotime.Now()
 	require.NoError(t, tr.ReceivedPacket(0, protocol.ECNNon, now, true))
@@ -141,7 +141,7 @@ func TestAppDataReceivedPacketTrackerMissingPackets(t *testing.T) {
 }
 
 func TestAppDataReceivedPacketTrackerDelayTime(t *testing.T) {
-	tr := newAppDataReceivedPacketTracker(utils.DefaultLogger)
+	tr := newAppDataReceivedPacketTracker(&utils.RTTStats{}, utils.DefaultLogger)
 
 	now := monotime.Now()
 	require.NoError(t, tr.ReceivedPacket(1, protocol.ECNNon, now, true))
@@ -158,7 +158,7 @@ func TestAppDataReceivedPacketTrackerDelayTime(t *testing.T) {
 }
 
 func TestAppDataReceivedPacketTrackerIgnoreBelow(t *testing.T) {
-	tr := newAppDataReceivedPacketTracker(utils.DefaultLogger)
+	tr := newAppDataReceivedPacketTracker(&utils.RTTStats{}, utils.DefaultLogger)
 
 	tr.IgnoreBelow(4)
 	// check that packets below 7 are considered duplicates

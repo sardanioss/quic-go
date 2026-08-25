@@ -75,8 +75,34 @@ func (h *receivedPacketTracker) IsPotentiallyDuplicate(pn protocol.PacketNumber)
 	return h.packetHistory.IsPotentiallyDuplicate(pn)
 }
 
-// number of ack-eliciting packets received before sending an ACK
-const packetsBeforeAck = 2
+// ACK decimation, from quiche's QuicReceivedPacketManager.
+//
+// A client that acknowledges every second packet forever is welded to a ratio
+// no real one holds. quiche starts at 2 and raises the threshold to 10 once the
+// peer has sent 100 ack-eliciting packets, and once decimated it also stops
+// using a flat max_ack_delay alarm and scales it to a quarter of min_rtt.
+//
+// The discriminator is not any single ratio: below the crossover the alarm
+// governs and a browser also lands near one ACK per two packets. It is the
+// INVARIANCE. Sweep the send rate over two decades and a real client's ratio
+// walks from about 1 through 2 to about 10, while a fixed threshold stays at
+// exactly 2.00 throughout.
+const (
+	// packetsBeforeAck is the threshold before decimation kicks in.
+	packetsBeforeAck = 2
+	// packetsBeforeAckDecimated is the threshold after it does.
+	// quiche: kMaxRetransmittablePacketsBeforeAck.
+	packetsBeforeAckDecimated = 10
+	// minReceivedBeforeAckDecimation is how many ack-eliciting packets the peer
+	// must have sent before the threshold is raised.
+	// quiche: kMinReceivedBeforeAckDecimation.
+	minReceivedBeforeAckDecimation = 100
+	// ackDecimationDelayDivisor scales the ACK alarm to a fraction of min_rtt
+	// once decimated. quiche uses a quarter.
+	ackDecimationDelayDivisor = 4
+	// minAckDecimationDelay is the floor on that scaled alarm.
+	minAckDecimationDelay = time.Millisecond
+)
 
 // The appDataReceivedPacketTracker tracks packets received in the Application Data packet number space.
 // It waits until at least 2 packets were received before queueing an ACK, or until the max_ack_delay was reached.
@@ -94,16 +120,54 @@ type appDataReceivedPacketTracker struct {
 	ackElicitingPacketsReceivedSinceLastAck int
 	ackAlarm                                monotime.Time
 
-	logger utils.Logger
+	// ackElicitingPacketsReceived counts every ack-eliciting packet the peer
+	// has sent on this connection, which is what decimation keys off.
+	ackElicitingPacketsReceived int
+
+	rttStats *utils.RTTStats
+	logger   utils.Logger
 }
 
-func newAppDataReceivedPacketTracker(logger utils.Logger) *appDataReceivedPacketTracker {
+func newAppDataReceivedPacketTracker(rttStats *utils.RTTStats, logger utils.Logger) *appDataReceivedPacketTracker {
 	h := &appDataReceivedPacketTracker{
 		receivedPacketTracker: *newReceivedPacketTracker(),
 		maxAckDelay:           protocol.MaxAckDelay,
+		rttStats:              rttStats,
 		logger:                logger,
 	}
 	return h
+}
+
+// decimated reports whether the peer has sent enough for the raised threshold
+// to apply.
+func (h *appDataReceivedPacketTracker) decimated() bool {
+	return h.ackElicitingPacketsReceived >= minReceivedBeforeAckDecimation
+}
+
+// packetsBeforeAck is the number of ack-eliciting packets to wait for before
+// queueing an ACK.
+func (h *appDataReceivedPacketTracker) packetsBeforeAck() int {
+	if h.decimated() {
+		return packetsBeforeAckDecimated
+	}
+	return packetsBeforeAck
+}
+
+// ackDelay is how long to wait before sending an ACK that the threshold has not
+// already triggered.
+//
+// quiche uses the flat local_max_ack_delay_ until decimation, then
+// max(min(local_max_ack_delay_, min_rtt/4), 1ms). Waiting a flat 25ms on a
+// decimated connection would undo the threshold on any path slower than 100ms.
+func (h *appDataReceivedPacketTracker) ackDelay() time.Duration {
+	if !h.decimated() || h.rttStats == nil {
+		return h.maxAckDelay
+	}
+	minRTT := h.rttStats.MinRTT()
+	if minRTT <= 0 {
+		return h.maxAckDelay
+	}
+	return max(min(h.maxAckDelay, minRTT/ackDecimationDelayDivisor), minAckDecimationDelay)
 }
 
 func (h *appDataReceivedPacketTracker) ReceivedPacket(pn protocol.PacketNumber, ecn protocol.ECN, rcvTime monotime.Time, ackEliciting bool) error {
@@ -118,6 +182,7 @@ func (h *appDataReceivedPacketTracker) ReceivedPacket(pn protocol.PacketNumber, 
 		return nil
 	}
 	h.ackElicitingPacketsReceivedSinceLastAck++
+	h.ackElicitingPacketsReceived++
 	isMissing := h.isMissing(pn)
 	if !h.ackQueued && h.shouldQueueACK(pn, ecn, isMissing) {
 		h.ackQueued = true
@@ -125,9 +190,10 @@ func (h *appDataReceivedPacketTracker) ReceivedPacket(pn protocol.PacketNumber, 
 	}
 	if !h.ackQueued {
 		// No ACK queued, but we'll need to acknowledge the packet after max_ack_delay.
-		h.ackAlarm = rcvTime.Add(h.maxAckDelay)
+		delay := h.ackDelay()
+		h.ackAlarm = rcvTime.Add(delay)
 		if h.logger.Debug() {
-			h.logger.Debugf("\tSetting ACK timer to max ack delay: %s", h.maxAckDelay)
+			h.logger.Debugf("\tSetting ACK timer to %s", delay)
 		}
 	}
 	return nil
@@ -183,10 +249,11 @@ func (h *appDataReceivedPacketTracker) shouldQueueACK(pn protocol.PacketNumber, 
 		return true
 	}
 
-	// send an ACK every 2 ack-eliciting packets
-	if h.ackElicitingPacketsReceivedSinceLastAck >= packetsBeforeAck {
+	// send an ACK once enough ack-eliciting packets have arrived
+	threshold := h.packetsBeforeAck()
+	if h.ackElicitingPacketsReceivedSinceLastAck >= threshold {
 		if h.logger.Debug() {
-			h.logger.Debugf("\tQueueing ACK because packet %d packets were received after the last ACK (using initial threshold: %d).", h.ackElicitingPacketsReceivedSinceLastAck, packetsBeforeAck)
+			h.logger.Debugf("\tQueueing ACK because %d packets were received after the last ACK (threshold: %d).", h.ackElicitingPacketsReceivedSinceLastAck, threshold)
 		}
 		return true
 	}
