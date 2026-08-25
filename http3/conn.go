@@ -46,8 +46,12 @@ type rawConn struct {
 
 	onStreamsEmpty func()
 
-	settings         *Settings
-	receivedSettings chan struct{}
+	settings *Settings
+	// peerQPACKMaxTableCapacity is the peer's SETTINGS_QPACK_MAX_TABLE_CAPACITY,
+	// or -1 if it did not send one. Written before the control stream handler
+	// is invoked and read from there.
+	peerQPACKMaxTableCapacity int64
+	receivedSettings          chan struct{}
 
 	qlogger qlogwriter.Recorder
 
@@ -329,6 +333,9 @@ func (c *rawConn) handleControlStream(str *quic.ReceiveStream) {
 		EnableExtendedConnect: sf.ExtendedConnect,
 		Other:                 sf.Other,
 	}
+	// Kept separately because Settings does not carry it and the QPACK encoder
+	// needs to answer it. -1 means the peer did not send it.
+	c.peerQPACKMaxTableCapacity = sf.QPACKMaxTableCapacity
 	close(c.receivedSettings)
 	if sf.Datagram {
 		// If datagram support was enabled on our side as well as on the server side,

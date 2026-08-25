@@ -73,6 +73,14 @@ type ClientConn struct {
 	maxStreamID  quic.StreamID // set once a GOAWAY frame is received
 	lastStreamID quic.StreamID // the highest stream ID that was opened
 
+	// The QPACK encoder and decoder streams stay open for the connection's
+	// life and are written from two goroutines: the control stream handler
+	// answers the peer's advertised table capacity, and the encoder
+	// instruction handler acknowledges what the peer inserts.
+	qpackMx         sync.Mutex
+	qpackEncoderStr *quic.SendStream
+	qpackDecoderStr *quic.SendStream
+
 	qlogger qlogwriter.Recorder
 	logger  *slog.Logger
 
@@ -120,7 +128,7 @@ func newClientConn(
 		c.logger,
 	)
 	// Set the QPACK encoder instruction handler to enable dynamic table support
-	c.rawConn.qpackEncoderInstructionHandler = c.decoder.ProcessEncoderInstructions
+	c.rawConn.qpackEncoderInstructionHandler = c.handleQPACKEncoderInstructions
 	// send the SETTINGs frame synchronously to ensure they're sent before any request
 	// Extract QPACK settings from AdditionalSettings for Chrome-like order
 	// Real iOS Safari/Chrome sends only: QPACK_MAX_TABLE_CAPACITY, QPACK_BLOCKED_STREAMS, GREASE
@@ -247,6 +255,12 @@ func (c *ClientConn) handleUnidirectionalStream(str *quic.ReceiveStream) {
 }
 
 func (c *ClientConn) handleControlStream(str *quic.ReceiveStream, fp *frameParser) {
+	// The peer's SETTINGS have been parsed by the time this is called, so this
+	// is where the QPACK encoder answers the advertised table capacity.
+	if capacity := c.rawConn.peerQPACKMaxTableCapacity; capacity > 0 {
+		c.sendQPACKTableCapacity(uint64(capacity))
+	}
+
 	for {
 		f, err := fp.ParseNext(c.qlogger)
 		if err != nil {
@@ -538,6 +552,26 @@ func (c *ClientConn) doRequest(req *http.Request, str *RequestStream) (*http.Res
 	return res, nil
 }
 
+// maxQPACKEncoderTableCapacity bounds the dynamic table we are willing to
+// answer with, however much the peer offers.
+const maxQPACKEncoderTableCapacity = 64 << 10
+
+// appendQPACKPrefixedInt writes an RFC 7541 prefix integer with the given
+// number of prefix bits, OR-ing the pattern into the first byte.
+func appendQPACKPrefixedInt(b []byte, prefixBits uint8, pattern byte, v uint64) []byte {
+	maxPrefix := uint64(1)<<prefixBits - 1
+	if v < maxPrefix {
+		return append(b, pattern|byte(v))
+	}
+	b = append(b, pattern|byte(maxPrefix))
+	v -= maxPrefix
+	for v >= 128 {
+		b = append(b, byte(v%128)|0x80)
+		v /= 128
+	}
+	return append(b, byte(v))
+}
+
 // openQPACKEncoderStream opens the QPACK encoder stream.
 // Chrome opens this stream even without using dynamic tables.
 func (c *ClientConn) openQPACKEncoderStream() {
@@ -555,8 +589,40 @@ func (c *ClientConn) openQPACKEncoderStream() {
 		if c.logger != nil {
 			c.logger.Debug("failed to write QPACK encoder stream type", "error", err)
 		}
+		return
 	}
-	// Keep stream open but don't write anything else (no dynamic table updates)
+	c.qpackMx.Lock()
+	c.qpackEncoderStr = str
+	c.qpackMx.Unlock()
+}
+
+// sendQPACKTableCapacity answers the peer's advertised
+// SETTINGS_QPACK_MAX_TABLE_CAPACITY with a Set Dynamic Table Capacity
+// instruction on the encoder stream.
+//
+// quiche wires the setting into SetDynamicTableCapacity, which calls
+// SendSetDynamicTableCapacity unconditionally, so a real client answers even
+// when it never goes on to insert anything. This stream used to carry its type
+// byte and then not one further byte for the life of the connection, which a
+// server can test by advertising any non-zero capacity and reading what comes
+// back. It needs no inserts and does not depend on blocked-streams.
+//
+// This does NOT make the encoder start using a dynamic table; that is a much
+// larger change and a separate divergence.
+func (c *ClientConn) sendQPACKTableCapacity(capacity uint64) {
+	if capacity > maxQPACKEncoderTableCapacity {
+		capacity = maxQPACKEncoderTableCapacity
+	}
+	c.qpackMx.Lock()
+	str := c.qpackEncoderStr
+	c.qpackMx.Unlock()
+	if str == nil {
+		return
+	}
+	// Set Dynamic Table Capacity: 001xxxxx, 5-bit prefix. RFC 9204 4.3.1.
+	if _, err := str.Write(appendQPACKPrefixedInt(nil, 5, 0x20, capacity)); err != nil && c.logger != nil {
+		c.logger.Debug("failed to write QPACK Set Dynamic Table Capacity", "error", err)
+	}
 }
 
 // openQPACKDecoderStream opens the QPACK decoder stream.
@@ -576,8 +642,37 @@ func (c *ClientConn) openQPACKDecoderStream() {
 		if c.logger != nil {
 			c.logger.Debug("failed to write QPACK decoder stream type", "error", err)
 		}
+		return
 	}
-	// Keep stream open but don't write anything else (no decoder acknowledgements)
+	c.qpackMx.Lock()
+	c.qpackDecoderStr = str
+	c.qpackMx.Unlock()
+}
+
+// handleQPACKEncoderInstructions ingests the peer's encoder instructions and
+// acknowledges what it inserted.
+//
+// We already maintained a real dynamic table from these and then never said so.
+// quiche sends the Insert Count Increment from QpackDecoder outside any
+// required-insert-count guard, so a real client acknowledges an insertion even
+// when it never references the entry. A server can test this with one insert
+// and one response: push an Insert With Literal Name, serve the response, and
+// see whether anything at all comes back on the decoder stream.
+func (c *ClientConn) handleQPACKEncoderInstructions(data []byte) error {
+	before := c.decoder.InsertCount()
+	err := c.decoder.ProcessEncoderInstructions(data)
+	if inserted := c.decoder.InsertCount() - before; inserted > 0 {
+		c.qpackMx.Lock()
+		str := c.qpackDecoderStr
+		c.qpackMx.Unlock()
+		if str != nil {
+			// Insert Count Increment: 00xxxxxx, 6-bit prefix. RFC 9204 4.4.3.
+			if _, werr := str.Write(appendQPACKPrefixedInt(nil, 6, 0x00, inserted)); werr != nil && c.logger != nil {
+				c.logger.Debug("failed to write QPACK Insert Count Increment", "error", werr)
+			}
+		}
+	}
+	return err
 }
 
 // RawClientConn is a low-level HTTP/3 client connection.
