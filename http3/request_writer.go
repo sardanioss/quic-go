@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"io"
-	"net"
 	http "github.com/sardanioss/http"
 	"github.com/sardanioss/http/httptrace"
+	"io"
+	"net"
 	"net/textproto"
 	"sort"
 	"strconv"
@@ -199,28 +199,15 @@ func (w *requestWriter) encodeHeaders(req *http.Request, addGzipHeader bool, tra
 
 		var didUA bool
 
-		// Helper to process a single header
-		processHeader := func(k string) {
+		// Helper to process a single header. The values are passed in rather
+		// than looked up here, because a name may hold more than one slot in
+		// the order list and the caller decides which of its values this slot
+		// emits.
+		processHeader := func(k string, vv []string) {
 			if k == http.HeaderOrderKey || k == http.PHeaderOrderKey {
 				return
 			}
-			// Try canonical form first (Go stores headers as Title-Case)
-			vv, ok := req.Header[textproto.CanonicalMIMEHeaderKey(k)]
-			if !ok {
-				// Try exact key
-				vv, ok = req.Header[k]
-			}
-			if !ok {
-				// Last resort: case-insensitive scan
-				for hk, hvv := range req.Header {
-					if strings.EqualFold(hk, k) {
-						vv = hvv
-						ok = true
-						break
-					}
-				}
-			}
-			if !ok || len(vv) == 0 {
+			if len(vv) == 0 {
 				return
 			}
 
@@ -259,13 +246,32 @@ func (w *requestWriter) encodeHeaders(req *http.Request, addGzipHeader bool, tra
 		// Check for header order (HeaderOrderKey)
 		headerOrder, hasHeaderOrder := req.Header[http.HeaderOrderKey]
 		if hasHeaderOrder && len(headerOrder) > 0 {
+			// A name may hold more than one slot in the order list, which is
+			// how a caller asks for two fields of one name in chosen positions
+			// relative to other names: cookie, accept, cookie has to keep the
+			// accept in the middle. Count the slots per resolved map key first,
+			// then hand slot i the value at index i.
+			slots := make(map[string]int, len(headerOrder))
+			for _, k := range headerOrder {
+				if hk, ok := resolveHeaderKey(req.Header, k); ok {
+					slots[hk]++
+				}
+			}
+			cursor := make(map[string]int, len(slots))
+
 			// Track which headers we've processed
 			processed := make(map[string]bool)
 
 			// First, process headers in the specified order
 			for _, k := range headerOrder {
-				processHeader(k)
-				processed[strings.ToLower(k)] = true
+				hk, ok := resolveHeaderKey(req.Header, k)
+				if !ok {
+					continue
+				}
+				i := cursor[hk]
+				cursor[hk]++
+				processHeader(k, valuesForSlot(req.Header[hk], slots[hk], i))
+				processed[strings.ToLower(hk)] = true
 			}
 
 			// Then process any remaining headers not in the order list
@@ -281,7 +287,7 @@ func (w *requestWriter) encodeHeaders(req *http.Request, addGzipHeader bool, tra
 			}
 			sort.Strings(remaining)
 			for _, k := range remaining {
-				processHeader(k)
+				processHeader(k, req.Header[k])
 			}
 		} else {
 			// No header order specified, sort deterministically
@@ -443,4 +449,54 @@ func shouldSendReqContentLength(method string, contentLength int64) bool {
 func (w *requestWriter) WriteRequestTrailer(wr io.Writer, req *http.Request, streamID quic.StreamID, qlogger qlogwriter.Recorder) error {
 	_, err := writeTrailers(wr, req.Trailer, streamID, qlogger)
 	return err
+}
+
+// resolveHeaderKey returns the key under which h actually stores the header
+// named by key.
+//
+// The exact key wins over the canonical one, which matters only when a caller
+// lists one name in two casings: "Cookie" and "cookie" are two map entries, and
+// preferring the canonical form pointed both order slots at the first one. With
+// no exact or canonical hit and more than one fold candidate, take the lowest,
+// because map iteration is randomised and an order that changes from request to
+// request is itself a fingerprint.
+func resolveHeaderKey(h http.Header, key string) (string, bool) {
+	if _, ok := h[key]; ok {
+		return key, true
+	}
+	if canonical := textproto.CanonicalMIMEHeaderKey(key); canonical != key {
+		if _, ok := h[canonical]; ok {
+			return canonical, true
+		}
+	}
+	best := ""
+	found := false
+	for hk := range h {
+		if strings.EqualFold(hk, key) && (!found || hk < best) {
+			best, found = hk, true
+		}
+	}
+	return best, found
+}
+
+// valuesForSlot returns the values one order slot emits.
+//
+// n is how many slots the order list gives this header name and i is which of
+// them this is, counting from zero.
+//
+// One slot takes every value, which is the long-standing behaviour and the only
+// shape an ordinary caller produces. Several slots split the values one apiece
+// in order, and the last slot takes whatever is left, so listing a name twice
+// against three values does not drop the third.
+func valuesForSlot(vals []string, n, i int) []string {
+	if n <= 1 {
+		return vals
+	}
+	if i >= len(vals) {
+		return nil
+	}
+	if i == n-1 {
+		return vals[i:]
+	}
+	return vals[i : i+1]
 }
