@@ -102,6 +102,30 @@ func (h *ReceivedPacketHandler) GetAckFrame(encLevel protocol.EncryptionLevel, n
 	}
 }
 
+// GetAckFrameForClose returns the ACK frame to send with a CONNECTION_CLOSE.
+// Unlike GetAckFrame it does not wait for a packet that needs acknowledging:
+// quiche bundles its current ACK with every close, whether or not it has sent
+// that ACK already. It returns nil when nothing has been received at encLevel.
+func (h *ReceivedPacketHandler) GetAckFrameForClose(encLevel protocol.EncryptionLevel, now monotime.Time) *wire.AckFrame {
+	//nolint:exhaustive // 0-RTT packets can't contain ACK frames.
+	switch encLevel {
+	case protocol.EncryptionInitial:
+		if h.initialPackets != nil {
+			return h.initialPackets.ackFrameForClose()
+		}
+		return nil
+	case protocol.EncryptionHandshake:
+		if h.handshakePackets != nil {
+			return h.handshakePackets.ackFrameForClose()
+		}
+		return nil
+	case protocol.Encryption1RTT:
+		return h.appDataPackets.ackFrameForClose(now)
+	default:
+		return nil
+	}
+}
+
 func (h *ReceivedPacketHandler) IsPotentiallyDuplicate(pn protocol.PacketNumber, encLevel protocol.EncryptionLevel) bool {
 	switch encLevel {
 	case protocol.EncryptionInitial:

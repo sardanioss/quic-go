@@ -71,6 +71,20 @@ func (h *receivedPacketTracker) GetAckFrame() *wire.AckFrame {
 	return ack
 }
 
+// ackFrameForClose builds the ACK frame GetAckFrame would, but also when every
+// packet in it has been acknowledged before, and without touching the state
+// GetAckFrame keeps. It returns nil only when nothing has been received.
+func (h *receivedPacketTracker) ackFrameForClose() *wire.AckFrame {
+	var ack *wire.AckFrame
+	for r := range h.packetHistory.Backward() {
+		if ack == nil {
+			ack = &wire.AckFrame{ECT0: h.ect0, ECT1: h.ect1, ECNCE: h.ecnce}
+		}
+		ack.AckRanges = append(ack.AckRanges, wire.AckRange{Smallest: r.Start, Largest: r.End})
+	}
+	return ack
+}
+
 func (h *receivedPacketTracker) IsPotentiallyDuplicate(pn protocol.PacketNumber) bool {
 	return h.packetHistory.IsPotentiallyDuplicate(pn)
 }
@@ -289,6 +303,14 @@ func (h *appDataReceivedPacketTracker) GetAckFrame(now monotime.Time, onlyIfQueu
 	h.ackQueued = false
 	h.ackAlarm = 0
 	h.ackElicitingPacketsReceivedSinceLastAck = 0
+	return ack
+}
+
+func (h *appDataReceivedPacketTracker) ackFrameForClose(now monotime.Time) *wire.AckFrame {
+	ack := h.receivedPacketTracker.ackFrameForClose()
+	if ack != nil {
+		ack.DelayTime = max(0, now.Sub(h.largestObservedRcvdTime))
+	}
 	return ack
 }
 

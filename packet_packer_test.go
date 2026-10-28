@@ -4,8 +4,12 @@ import (
 	"bytes"
 	"crypto/rand"
 	"errors"
+	"io"
+	"slices"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/sardanioss/quic-go/internal/ackhandler"
 	"github.com/sardanioss/quic-go/internal/handshake"
@@ -419,6 +423,9 @@ func testPackConnectionCloseCoalesced(t *testing.T, pers protocol.Perspective) {
 	tp.pnManager.EXPECT().PopPacketNumber(protocol.EncryptionHandshake).Return(protocol.PacketNumber(2))
 	tp.sealingManager.EXPECT().GetInitialSealer().Return(newMockShortHeaderSealer(mockCtrl), nil)
 	tp.sealingManager.EXPECT().GetHandshakeSealer().Return(newMockShortHeaderSealer(mockCtrl), nil)
+	// nothing to acknowledge; a 0-RTT packet is never asked for an ACK
+	tp.ackFramer.EXPECT().GetAckFrameForClose(protocol.EncryptionInitial, gomock.Any())
+	tp.ackFramer.EXPECT().GetAckFrameForClose(protocol.EncryptionHandshake, gomock.Any())
 	switch pers {
 	case protocol.PerspectiveClient:
 		tp.sealingManager.EXPECT().Get0RTTSealer().Return(newMockShortHeaderSealer(mockCtrl), nil)
@@ -427,6 +434,7 @@ func testPackConnectionCloseCoalesced(t *testing.T, pers protocol.Perspective) {
 		tp.pnManager.EXPECT().PopPacketNumber(protocol.Encryption0RTT).Return(protocol.PacketNumber(3))
 	case protocol.PerspectiveServer:
 		tp.sealingManager.EXPECT().Get1RTTSealer().Return(newMockShortHeaderSealer(mockCtrl), nil)
+		tp.ackFramer.EXPECT().GetAckFrameForClose(protocol.Encryption1RTT, gomock.Any())
 		tp.pnManager.EXPECT().PeekPacketNumber(protocol.Encryption1RTT).Return(protocol.PacketNumber(3), protocol.PacketNumberLen2)
 		tp.pnManager.EXPECT().PopPacketNumber(protocol.Encryption1RTT).Return(protocol.PacketNumber(3))
 	}
@@ -498,6 +506,7 @@ func TestPackConnectionCloseCryptoError(t *testing.T) {
 	tp.sealingManager.EXPECT().GetInitialSealer().Return(nil, handshake.ErrKeysDropped)
 	tp.sealingManager.EXPECT().GetHandshakeSealer().Return(newMockShortHeaderSealer(mockCtrl), nil)
 	tp.sealingManager.EXPECT().Get1RTTSealer().Return(nil, handshake.ErrKeysNotYetAvailable)
+	tp.ackFramer.EXPECT().GetAckFrameForClose(protocol.EncryptionHandshake, gomock.Any())
 	quicErr := qerr.NewLocalCryptoError(0x42, errors.New("crypto error"))
 	quicErr.FrameType = 0x1234
 	p, err := tp.packer.PackConnectionClose(quicErr, protocol.MaxByteCount, protocol.Version1)
@@ -522,6 +531,7 @@ func TestPackConnectionClose1RTT(t *testing.T) {
 	tp.sealingManager.EXPECT().GetInitialSealer().Return(nil, handshake.ErrKeysDropped)
 	tp.sealingManager.EXPECT().GetHandshakeSealer().Return(nil, handshake.ErrKeysDropped)
 	tp.sealingManager.EXPECT().Get1RTTSealer().Return(newMockShortHeaderSealer(mockCtrl), nil)
+	tp.ackFramer.EXPECT().GetAckFrameForClose(protocol.Encryption1RTT, gomock.Any())
 	// expect no framer.PopStreamFrames
 	p, err := tp.packer.PackConnectionClose(&qerr.TransportError{
 		ErrorCode:    qerr.CryptoBufferExceeded,
@@ -535,6 +545,236 @@ func TestPackConnectionClose1RTT(t *testing.T) {
 	require.False(t, ccf.IsApplicationError)
 	require.Equal(t, uint64(qerr.CryptoBufferExceeded), ccf.ErrorCode)
 	require.Equal(t, "foo", ccf.ReasonPhrase)
+}
+
+// A close carries an ACK for the packet number space it is sent in, in front
+// of the CONNECTION_CLOSE, as Chrome's and Firefox's closes do.
+func TestPackConnectionCloseBundlesAck(t *testing.T) {
+	mockCtrl := gomock.NewController(t)
+	tp := newTestPacketPacker(t, mockCtrl, protocol.PerspectiveClient)
+	tp.pnManager.EXPECT().PeekPacketNumber(protocol.Encryption1RTT).Return(protocol.PacketNumber(0x42), protocol.PacketNumberLen2)
+	tp.pnManager.EXPECT().PopPacketNumber(protocol.Encryption1RTT).Return(protocol.PacketNumber(0x42))
+	tp.sealingManager.EXPECT().GetInitialSealer().Return(nil, handshake.ErrKeysDropped)
+	tp.sealingManager.EXPECT().GetHandshakeSealer().Return(nil, handshake.ErrKeysDropped)
+	tp.sealingManager.EXPECT().Get0RTTSealer().Return(nil, handshake.ErrKeysDropped)
+	tp.sealingManager.EXPECT().Get1RTTSealer().Return(newMockShortHeaderSealer(mockCtrl), nil)
+	ack := &wire.AckFrame{AckRanges: []wire.AckRange{{Smallest: 8, Largest: 10}}}
+	tp.ackFramer.EXPECT().GetAckFrameForClose(protocol.Encryption1RTT, gomock.Any()).Return(ack)
+	p, err := tp.packer.PackConnectionClose(&qerr.TransportError{
+		ErrorCode:    qerr.NoError,
+		ErrorMessage: "70:net error",
+	}, protocol.MaxByteCount, protocol.Version1)
+	require.NoError(t, err)
+	require.Empty(t, p.longHdrPackets)
+	require.Equal(t, ack, p.shortHdrPacket.Ack)
+	require.Len(t, p.shortHdrPacket.Frames, 1)
+
+	l, _, _, _, err := wire.ParseShortHeader(p.buffer.Data, testPackerConnIDLen)
+	require.NoError(t, err)
+	payload := p.buffer.Data[l:]
+	frameParser := wire.NewFrameParser(false, false, false)
+	frameType, lt, err := frameParser.ParseType(payload, protocol.Encryption1RTT)
+	require.NoError(t, err)
+	require.True(t, frameType.IsAckFrameType())
+	ackLen := int(ack.Length(protocol.Version1))
+	frameType, lt, err = frameParser.ParseType(payload[ackLen:], protocol.Encryption1RTT)
+	require.NoError(t, err)
+	frame, _, err := frameParser.ParseLessCommonFrame(frameType, payload[ackLen+lt:], protocol.Version1)
+	require.NoError(t, err)
+	require.Equal(t, &wire.ConnectionCloseFrame{ErrorCode: uint64(qerr.NoError), ReasonPhrase: "70:net error"}, frame)
+}
+
+// A close never exceeds the maximum packet size. The CONNECTION_CLOSE frames
+// are sized first and keep their reason phrase if they fit. The ACKs get the
+// room left, truncated as ACKs are everywhere else in the packer, or left out.
+// Only CONNECTION_CLOSE frames that don't fit on their own get their reason cut.
+func TestPackConnectionCloseMaxPacketSize(t *testing.T) {
+	const maxPacketSize protocol.ByteCount = protocol.MinInitialPacketSize
+	oneRTT := []protocol.EncryptionLevel{protocol.Encryption1RTT}
+	allLevels := []protocol.EncryptionLevel{protocol.EncryptionInitial, protocol.EncryptionHandshake, protocol.Encryption1RTT}
+	smallAck := func() *wire.AckFrame { return &wire.AckFrame{AckRanges: []wire.AckRange{{Smallest: 0, Largest: 2}}} }
+
+	t.Run("an ACK with many ranges", func(t *testing.T) {
+		reason := strings.Repeat("r", 400)
+		ack := manyRangeAck()
+		ranges := slices.Clone(ack.AckRanges)
+		size, frames := packAndParseClose(t, protocol.PerspectiveServer, oneRTT, map[protocol.EncryptionLevel]*wire.AckFrame{protocol.Encryption1RTT: ack}, reason, maxPacketSize)
+		require.LessOrEqual(t, size, maxPacketSize)
+		require.Greater(t, size, maxPacketSize-16, "a 16-byte ACK range would still fit")
+		require.Equal(t, reason, frames[protocol.Encryption1RTT].ccf.ReasonPhrase)
+		requireTruncatedAck(t, ranges, frames[protocol.Encryption1RTT].ack)
+	})
+
+	t.Run("a long reason phrase", func(t *testing.T) {
+		reason := strings.Repeat("ü", 1000) // 2 bytes each
+		size, frames := packAndParseClose(t, protocol.PerspectiveServer, oneRTT, map[protocol.EncryptionLevel]*wire.AckFrame{protocol.Encryption1RTT: manyRangeAck()}, reason, maxPacketSize)
+		require.LessOrEqual(t, size, maxPacketSize)
+		require.Greater(t, size, maxPacketSize-3, "the reason phrase is cut no more than needed")
+		require.Nil(t, frames[protocol.Encryption1RTT].ack, "no room is left for an ACK")
+		requireCutReason(t, reason, frames[protocol.Encryption1RTT].ccf.ReasonPhrase)
+	})
+
+	for _, pers := range []protocol.Perspective{protocol.PerspectiveServer, protocol.PerspectiveClient} {
+		t.Run("coalesced, "+pers.String(), func(t *testing.T) {
+			reason := strings.Repeat("r", 100)
+			ack := manyRangeAck()
+			ranges := slices.Clone(ack.AckRanges)
+			size, frames := packAndParseClose(t, pers, allLevels, map[protocol.EncryptionLevel]*wire.AckFrame{
+				protocol.EncryptionInitial:   smallAck(),
+				protocol.EncryptionHandshake: smallAck(),
+				protocol.Encryption1RTT:      ack,
+			}, reason, maxPacketSize)
+			switch pers {
+			case protocol.PerspectiveClient:
+				// the client pads the Initial, so the datagram is the maximum size
+				require.Equal(t, maxPacketSize, size)
+			case protocol.PerspectiveServer:
+				require.LessOrEqual(t, size, maxPacketSize)
+				require.Greater(t, size, maxPacketSize-16, "a 16-byte ACK range would still fit")
+			}
+			for _, encLevel := range allLevels {
+				require.Equal(t, reason, frames[encLevel].ccf.ReasonPhrase, encLevel)
+			}
+			require.Equal(t, smallAck().AckRanges, frames[protocol.EncryptionInitial].ack.AckRanges)
+			require.Equal(t, smallAck().AckRanges, frames[protocol.EncryptionHandshake].ack.AckRanges)
+			requireTruncatedAck(t, ranges, frames[protocol.Encryption1RTT].ack)
+		})
+	}
+
+	t.Run("coalesced, a long reason phrase", func(t *testing.T) {
+		reason := strings.Repeat("r", 1000)
+		size, frames := packAndParseClose(t, protocol.PerspectiveServer, allLevels, map[protocol.EncryptionLevel]*wire.AckFrame{
+			protocol.EncryptionInitial:   smallAck(),
+			protocol.EncryptionHandshake: smallAck(),
+			protocol.Encryption1RTT:      manyRangeAck(),
+		}, reason, maxPacketSize)
+		require.LessOrEqual(t, size, maxPacketSize)
+		require.Greater(t, size, maxPacketSize-3, "the reason phrase is cut no more than needed")
+		cut := frames[protocol.Encryption1RTT].ccf.ReasonPhrase
+		requireCutReason(t, reason, cut)
+		for _, encLevel := range allLevels {
+			require.Equal(t, cut, frames[encLevel].ccf.ReasonPhrase, "every packet carries the same reason phrase")
+			require.Nil(t, frames[encLevel].ack, "no room is left for an ACK")
+		}
+	})
+}
+
+// manyRangeAck returns an ACK frame with as many ranges as an ACK frame can
+// carry, every gap and range length taking an 8-byte varint: 1027 bytes.
+func manyRangeAck() *wire.AckFrame {
+	ack := &wire.AckFrame{}
+	pn := protocol.PacketNumber(1 << 61)
+	for range protocol.MaxNumAckRanges {
+		ack.AckRanges = append(ack.AckRanges, wire.AckRange{Smallest: pn - 1<<31, Largest: pn})
+		pn -= 1 << 33
+	}
+	return ack
+}
+
+func requireTruncatedAck(t *testing.T, ranges []wire.AckRange, ack *wire.AckFrame) {
+	t.Helper()
+	require.NotNil(t, ack)
+	require.NotEmpty(t, ack.AckRanges)
+	require.Less(t, len(ack.AckRanges), len(ranges), "the ACK was truncated")
+	require.Equal(t, ranges[:len(ack.AckRanges)], ack.AckRanges, "the ACK keeps its highest ranges")
+}
+
+func requireCutReason(t *testing.T, reason, cut string) {
+	t.Helper()
+	require.NotEmpty(t, cut)
+	require.Less(t, len(cut), len(reason))
+	require.True(t, strings.HasPrefix(reason, cut))
+	require.True(t, utf8.ValidString(cut), "the reason phrase is cut at a character boundary")
+}
+
+// closeFrames are the frames of one packet of a close.
+type closeFrames struct {
+	ack *wire.AckFrame // nil if the packet has none
+	ccf *wire.ConnectionCloseFrame
+}
+
+// packAndParseClose packs a transport close with keys at the given levels and
+// the given ACKs, and returns the datagram's size and each packet's frames, as
+// parsed from the datagram.
+func packAndParseClose(
+	t *testing.T,
+	pers protocol.Perspective,
+	encLevels []protocol.EncryptionLevel,
+	acks map[protocol.EncryptionLevel]*wire.AckFrame,
+	reason string,
+	maxPacketSize protocol.ByteCount,
+) (protocol.ByteCount, map[protocol.EncryptionLevel]closeFrames) {
+	t.Helper()
+	mockCtrl := gomock.NewController(t)
+	tp := newTestPacketPacker(t, mockCtrl, pers)
+	sealerGetters := map[protocol.EncryptionLevel]func() *gomock.Call{
+		protocol.EncryptionInitial:   func() *gomock.Call { return tp.sealingManager.EXPECT().GetInitialSealer().Call },
+		protocol.EncryptionHandshake: func() *gomock.Call { return tp.sealingManager.EXPECT().GetHandshakeSealer().Call },
+		protocol.Encryption0RTT:      func() *gomock.Call { return tp.sealingManager.EXPECT().Get0RTTSealer().Call },
+		protocol.Encryption1RTT:      func() *gomock.Call { return tp.sealingManager.EXPECT().Get1RTTSealer().Call },
+	}
+	for encLevel, getSealer := range sealerGetters {
+		if pers == protocol.PerspectiveServer && encLevel == protocol.Encryption0RTT {
+			continue
+		}
+		if !slices.Contains(encLevels, encLevel) {
+			getSealer().Return(nil, handshake.ErrKeysDropped)
+			continue
+		}
+		getSealer().Return(newMockShortHeaderSealer(mockCtrl), nil)
+		tp.pnManager.EXPECT().PeekPacketNumber(encLevel).Return(protocol.PacketNumber(0x42), protocol.PacketNumberLen2)
+		tp.pnManager.EXPECT().PopPacketNumber(encLevel).Return(protocol.PacketNumber(0x42))
+		tp.ackFramer.EXPECT().GetAckFrameForClose(encLevel, gomock.Any()).Return(acks[encLevel])
+	}
+	p, err := tp.packer.PackConnectionClose(&qerr.TransportError{ErrorCode: qerr.NoError, ErrorMessage: reason}, maxPacketSize, protocol.Version1)
+	require.NoError(t, err)
+
+	const sealerOverhead = 7 // see newMockShortHeaderSealer
+	frames := make(map[protocol.EncryptionLevel]closeFrames)
+	data := p.buffer.Data
+	for len(data) > 0 && wire.IsLongHeaderPacket(data[0]) {
+		hdr, packet, rest, err := wire.ParsePacket(data)
+		require.NoError(t, err)
+		extHdr, err := hdr.ParseExtended(packet)
+		require.NoError(t, err)
+		encLevel := (&longHeaderPacket{header: extHdr}).EncryptionLevel()
+		frames[encLevel] = parseCloseFrames(t, packet[extHdr.ParsedLen():len(packet)-sealerOverhead], encLevel)
+		data = rest
+	}
+	if len(data) > 0 {
+		l, _, _, _, err := wire.ParseShortHeader(data, testPackerConnIDLen)
+		require.NoError(t, err)
+		frames[protocol.Encryption1RTT] = parseCloseFrames(t, data[l:len(data)-sealerOverhead], protocol.Encryption1RTT)
+	}
+	require.Len(t, frames, len(encLevels))
+	return p.buffer.Len(), frames
+}
+
+// parseCloseFrames parses a close packet's payload: an ACK, if there is one,
+// the CONNECTION_CLOSE, and nothing after it but padding.
+func parseCloseFrames(t *testing.T, b []byte, encLevel protocol.EncryptionLevel) closeFrames {
+	t.Helper()
+	var frames closeFrames
+	parser := wire.NewFrameParser(false, false, false)
+	frameType, l, err := parser.ParseType(b, encLevel)
+	require.NoError(t, err)
+	b = b[l:]
+	if frameType.IsAckFrameType() {
+		ack, ackLen, err := parser.ParseAckFrame(frameType, b, encLevel, protocol.Version1)
+		require.NoError(t, err)
+		frames.ack = &wire.AckFrame{AckRanges: slices.Clone(ack.AckRanges)}
+		b = b[ackLen:]
+		frameType, l, err = parser.ParseType(b, encLevel)
+		require.NoError(t, err)
+		b = b[l:]
+	}
+	frame, l, err := parser.ParseLessCommonFrame(frameType, b, protocol.Version1)
+	require.NoError(t, err)
+	require.IsType(t, &wire.ConnectionCloseFrame{}, frame)
+	frames.ccf = frame.(*wire.ConnectionCloseFrame)
+	_, _, err = parser.ParseType(b[l:], encLevel)
+	require.ErrorIs(t, err, io.EOF, "only padding follows the CONNECTION_CLOSE")
+	return frames
 }
 
 func TestPack1RTTPacketNothingToSend(t *testing.T) {

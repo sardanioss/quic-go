@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"unicode/utf8"
 
 	"github.com/sardanioss/quic-go/internal/ackhandler"
 	"github.com/sardanioss/quic-go/internal/handshake"
@@ -114,6 +115,7 @@ type frameSource interface {
 
 type ackFrameSource interface {
 	GetAckFrame(_ protocol.EncryptionLevel, now monotime.Time, onlyIfQueued bool) *wire.AckFrame
+	GetAckFrameForClose(_ protocol.EncryptionLevel, now monotime.Time) *wire.AckFrame
 }
 
 type packetPacker struct {
@@ -203,12 +205,14 @@ func (p *packetPacker) packConnectionClose(
 	var sealers [4]sealer
 	var hdrs [3]*wire.ExtendedHeader
 	var payloads [4]payload
+	var ccfs [4]*wire.ConnectionCloseFrame
 	var size protocol.ByteCount
 	var connID protocol.ConnectionID
 	var oneRTTPacketNumber protocol.PacketNumber
 	var oneRTTPacketNumberLen protocol.PacketNumberLen
 	var keyPhase protocol.KeyPhaseBit // only set for 1-RTT
 	var numLongHdrPackets uint8
+	var numReasons protocol.ByteCount // CONNECTION_CLOSE frames that carry the reason phrase
 	encLevels := [4]protocol.EncryptionLevel{protocol.EncryptionInitial, protocol.EncryptionHandshake, protocol.Encryption0RTT, protocol.Encryption1RTT}
 	for i, encLevel := range encLevels {
 		if p.perspective == protocol.PerspectiveServer && encLevel == protocol.Encryption0RTT {
@@ -255,11 +259,15 @@ func (p *packetPacker) packConnectionClose(
 			return nil, err
 		}
 		sealers[i] = sealer
+		ccfs[i] = ccf
+		if ccf.ReasonPhrase != "" {
+			numReasons++
+		}
 		var hdr *wire.ExtendedHeader
 		if encLevel == protocol.Encryption1RTT {
 			connID = p.getDestConnID()
 			oneRTTPacketNumber, oneRTTPacketNumberLen = p.pnManager.PeekPacketNumber(protocol.Encryption1RTT)
-			size += p.shortHeaderPacketLength(connID, oneRTTPacketNumberLen, pl)
+			size += p.shortHeaderPacketLength(connID, oneRTTPacketNumberLen, pl) + protocol.ByteCount(sealer.Overhead())
 		} else {
 			hdr = p.getLongHeader(encLevel, v)
 			hdrs[i] = hdr
@@ -267,6 +275,48 @@ func (p *packetPacker) packConnectionClose(
 			numLongHdrPackets++
 		}
 		payloads[i] = pl
+	}
+	// The packets go out in one datagram. If their CONNECTION_CLOSE frames
+	// don't fit, cut the reason phrase, by the same amount in every frame that
+	// carries it.
+	if size > maxPacketSize && numReasons > 0 {
+		reason = truncateReasonPhrase(reason, (size-maxPacketSize+numReasons-1)/numReasons)
+		for i, ccf := range ccfs {
+			if ccf == nil || ccf.ReasonPhrase == "" {
+				continue
+			}
+			saved := ccf.Length(v)
+			ccf.ReasonPhrase = reason
+			saved -= ccf.Length(v)
+			payloads[i].length -= saved
+			size -= saved
+		}
+	}
+	if size > maxPacketSize {
+		return nil, fmt.Errorf("packet too large (%d bytes, allowed %d bytes)", size, maxPacketSize)
+	}
+	// Bundle an ACK for each level's packet number space, as quiche does for
+	// every close ("Always bundle an ACK with connection close"), and as
+	// Firefox's neqo does too. The ACKs get the room the CONNECTION_CLOSE
+	// frames leave: an ACK that doesn't fit is truncated, as everywhere else in
+	// the packer, and left out if its first range doesn't fit either. A 0-RTT
+	// packet cannot carry one.
+	now := monotime.Now()
+	for i, encLevel := range encLevels {
+		if sealers[i] == nil || encLevel == protocol.Encryption0RTT {
+			continue
+		}
+		ack := p.acks.GetAckFrameForClose(encLevel, now)
+		if ack == nil {
+			continue
+		}
+		room := maxPacketSize - size
+		ack.Truncate(room, v) // keeps the first range, even if that doesn't fit
+		if l := ack.Length(v); l <= room {
+			payloads[i].ack = ack
+			payloads[i].length += l
+			size += l
+		}
 	}
 	buffer := getPacketBuffer()
 	packet := &coalescedPacket{
@@ -296,6 +346,20 @@ func (p *packetPacker) packConnectionClose(
 		}
 	}
 	return packet, nil
+}
+
+// truncateReasonPhrase cuts at least n bytes off the end of reason. It cuts at
+// a UTF-8 character boundary, since a reason phrase should be UTF-8 (RFC 9000,
+// Section 19.19).
+func truncateReasonPhrase(reason string, n protocol.ByteCount) string {
+	l := len(reason) - int(n)
+	if l <= 0 {
+		return ""
+	}
+	for l > 0 && !utf8.RuneStart(reason[l]) {
+		l--
+	}
+	return reason[:l]
 }
 
 // longHeaderPacketLength calculates the length of a serialized long header packet.
