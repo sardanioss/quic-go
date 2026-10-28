@@ -49,6 +49,7 @@ type roundTripperWithCount struct {
 	dialErr    error
 	conn       *quic.Conn
 	clientConn clientConn
+	closeConn  func(*quic.Conn) error // Transport.CloseConn
 
 	useCount atomic.Int64
 }
@@ -57,6 +58,9 @@ func (r *roundTripperWithCount) Close() error {
 	r.cancel()
 	<-r.dialing
 	if r.conn != nil {
+		if r.closeConn != nil {
+			return r.closeConn(r.conn)
+		}
 		return r.conn.CloseWithError(0, "")
 	}
 	return nil
@@ -101,6 +105,12 @@ type Transport struct {
 	// SendGreaseFrames enables sending GREASE frames on the control stream
 	// after the SETTINGS frame, mimicking browser behavior.
 	SendGreaseFrames bool
+
+	// CloseConn, if set, ends each QUIC connection that Close and
+	// CloseIdleConnections let go of, so a client can close the way the
+	// browser it mimics does. Left nil, the connection is closed with
+	// CloseWithError(0, "").
+	CloseConn func(*quic.Conn) error
 
 	Logger *slog.Logger
 
@@ -335,8 +345,9 @@ func (t *Transport) getClient(ctx context.Context, hostname string, onlyCached b
 		}
 		ctx, cancel := context.WithCancel(ctx)
 		cl = &roundTripperWithCount{
-			dialing: make(chan struct{}),
-			cancel:  cancel,
+			dialing:   make(chan struct{}),
+			cancel:    cancel,
+			closeConn: t.CloseConn,
 		}
 		go func() {
 			defer close(cl.dialing)
