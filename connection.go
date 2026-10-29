@@ -2208,6 +2208,21 @@ func (c *Conn) CloseWithError(code ApplicationErrorCode, desc string) error {
 	return nil
 }
 
+// CloseWithTransportError closes the connection with a transport error.
+// The peer gets a transport CONNECTION_CLOSE (frame type 0x1c) carrying code,
+// a frame type of 0 and reason, where CloseWithError sends an application
+// CONNECTION_CLOSE (0x1d). Chromium ends the QUIC sessions it is done with this
+// way: QUIC_CONNECTION_CANCELLED maps to NO_ERROR, and the reason is its own
+// error number followed by the details, "70:net error".
+func (c *Conn) CloseWithTransportError(code TransportErrorCode, reason string) error {
+	c.closeLocal(&qerr.TransportError{
+		ErrorCode:    code,
+		ErrorMessage: reason,
+	})
+	<-c.ctx.Done()
+	return nil
+}
+
 func (c *Conn) closeWithTransportError(code TransportErrorCode) {
 	c.closeLocal(&qerr.TransportError{ErrorCode: code})
 	<-c.ctx.Done()

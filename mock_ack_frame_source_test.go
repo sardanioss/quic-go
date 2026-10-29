@@ -79,3 +79,41 @@ func (c *MockAckFrameSourceGetAckFrameCall) DoAndReturn(f func(protocol.Encrypti
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }
+
+// GetAckFrameForClose mocks base method.
+func (m *MockAckFrameSource) GetAckFrameForClose(arg0 protocol.EncryptionLevel, now monotime.Time) *wire.AckFrame {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAckFrameForClose", arg0, now)
+	ret0, _ := ret[0].(*wire.AckFrame)
+	return ret0
+}
+
+// GetAckFrameForClose indicates an expected call of GetAckFrameForClose.
+func (mr *MockAckFrameSourceMockRecorder) GetAckFrameForClose(arg0, now any) *MockAckFrameSourceGetAckFrameForCloseCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAckFrameForClose", reflect.TypeOf((*MockAckFrameSource)(nil).GetAckFrameForClose), arg0, now)
+	return &MockAckFrameSourceGetAckFrameForCloseCall{Call: call}
+}
+
+// MockAckFrameSourceGetAckFrameForCloseCall wrap *gomock.Call
+type MockAckFrameSourceGetAckFrameForCloseCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockAckFrameSourceGetAckFrameForCloseCall) Return(arg0 *wire.AckFrame) *MockAckFrameSourceGetAckFrameForCloseCall {
+	c.Call = c.Call.Return(arg0)
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockAckFrameSourceGetAckFrameForCloseCall) Do(f func(protocol.EncryptionLevel, monotime.Time) *wire.AckFrame) *MockAckFrameSourceGetAckFrameForCloseCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockAckFrameSourceGetAckFrameForCloseCall) DoAndReturn(f func(protocol.EncryptionLevel, monotime.Time) *wire.AckFrame) *MockAckFrameSourceGetAckFrameForCloseCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}

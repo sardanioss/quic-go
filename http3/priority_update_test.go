@@ -2,10 +2,15 @@ package http3
 
 import (
 	"bytes"
+	"context"
 	"fmt"
+	"io"
 	"sync"
 	"testing"
+	"time"
 
+	http "github.com/sardanioss/http"
+	"github.com/sardanioss/http/httptest"
 	"github.com/sardanioss/quic-go"
 	"github.com/sardanioss/quic-go/quicvarint"
 
@@ -137,4 +142,85 @@ func TestPriorityUpdateConcurrentWritesDoNotTear(t *testing.T) {
 
 	// A torn write makes this parse fail; a dropped one makes the count wrong.
 	require.Len(t, parsePriorityUpdates(t, buf.Bytes()), n)
+}
+
+// Chrome derives the "priority" header and the PRIORITY_UPDATE frame from the
+// same request priority, and sends neither when that priority is the RFC 9218
+// default. A request without the header is at the default and gets no frame; a
+// request with a non-default value gets a frame carrying it, whether the header
+// map holds it under the canonical key or under another spelling, which the
+// request writer sends as it is.
+func TestClientPriorityUpdateFollowsPriorityHeader(t *testing.T) {
+	clientConn, serverConn := newConnPair(t)
+	cc := (&Transport{SendGreaseFrames: true}).NewClientConn(clientConn)
+
+	roundTrip := func(key, priority string) quic.StreamID {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "https://quic-go.net/", nil)
+		if priority != "" {
+			req.Header[key] = []string{priority}
+		}
+		errChan := make(chan error, 1)
+		go func() {
+			_, err := cc.RoundTrip(req)
+			errChan <- err
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		str, err := serverConn.AcceptStream(ctx)
+		require.NoError(t, err)
+		str.SetReadDeadline(time.Now().Add(time.Second))
+		hfs := decodeHeader(t, str)
+		if priority == "" {
+			require.NotContains(t, hfs, "priority")
+		} else {
+			require.Equal(t, []string{priority}, hfs["priority"])
+		}
+		_, err = str.Write(encodeResponse(t, http.StatusOK))
+		require.NoError(t, err)
+		select {
+		case err := <-errChan:
+			require.NoError(t, err)
+		case <-time.After(time.Second):
+			t.Fatal("timeout")
+		}
+		return str.StreamID()
+	}
+	// Each request's PRIORITY_UPDATE is written before its HEADERS, and the
+	// second request is sent after the first one's HEADERS arrived, so a frame
+	// for the first request would come first on the control stream.
+	roundTrip("", "")
+	withHeader := roundTrip("Priority", "u=1")
+	lowercase := roundTrip("priority", "u=2")
+	want := [][2]string{{fmt.Sprint(withHeader), "u=1"}, {fmt.Sprint(lowercase), "u=2"}}
+	var got [][2]string
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	str, err := serverConn.AcceptUniStream(ctx)
+	require.NoError(t, err)
+	str.SetReadDeadline(time.Now().Add(time.Second))
+	r := quicvarint.NewReader(str)
+	typ, err := quicvarint.Read(r)
+	require.NoError(t, err)
+	require.EqualValues(t, streamTypeControlStream, typ)
+	for { // SETTINGS and GREASE come first
+		frameType, err := quicvarint.Read(r)
+		require.NoError(t, err)
+		l, err := quicvarint.Read(r)
+		require.NoError(t, err)
+		payload := make([]byte, l)
+		_, err = io.ReadFull(r, payload)
+		require.NoError(t, err)
+		if frameType != priorityUpdateFrameType {
+			continue
+		}
+		id, n, err := quicvarint.Parse(payload)
+		require.NoError(t, err)
+		got = append(got, [2]string{fmt.Sprint(id), string(payload[n:])})
+		if len(got) == len(want) {
+			require.Equal(t, want, got, "a request without a priority header got a PRIORITY_UPDATE, or one with it got none")
+			return
+		}
+	}
 }
