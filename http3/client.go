@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/textproto"
+	"strings"
 	"sync"
 	"time"
 
@@ -374,19 +375,15 @@ func (c *ClientConn) roundTrip(req *http.Request) (*http.Response, error) {
 
 	// PRIORITY_UPDATE on the control stream, emitted just before this request's
 	// HEADERS and naming the stream we just opened, with the priority field
-	// value taken from the request's "priority:" header. Chrome sends one per
-	// request whose priority differs from the RFC 9218 default, so this is not
-	// a first-request-only thing; MaybeSendPriorityUpdate applies that rule.
-	// Gated on sendGreaseFrames so presets that don't behave like Chrome stay
-	// byte-clean.
+	// value taken from the request's "priority:" header. Chrome derives the
+	// header and the frame from the same request priority, and sends neither
+	// when that priority is the RFC 9218 default (u=3, not incremental), so a
+	// request without the header gets no frame. MaybeSendPriorityUpdate applies
+	// that rule to every request, not just the first, and reads an empty value
+	// as the default. Gated on sendGreaseFrames so presets that don't behave
+	// like Chrome stay byte-clean.
 	if c.rawConn.sendGreaseFrames {
-		priorityValue := req.Header.Get("Priority")
-		if priorityValue == "" {
-			// Chrome emits the frame whether or not it also sent the header, so
-			// fall back to its document value rather than skipping the frame.
-			priorityValue = "u=0, i"
-		}
-		_ = c.rawConn.MaybeSendPriorityUpdate(str.StreamID(), priorityValue)
+		_ = c.rawConn.MaybeSendPriorityUpdate(str.StreamID(), priorityFieldValue(req.Header))
 	}
 
 	// Request Cancellation:
@@ -694,4 +691,20 @@ func (c *ClientConn) HandleBidirectionalStream(str *quic.Stream) {
 		quic.ApplicationErrorCode(ErrCodeStreamCreationError),
 		fmt.Sprintf("server opened bidirectional stream %d", str.StreamID()),
 	)
+}
+
+// priorityFieldValue returns the request's "priority" header. A header map can
+// hold it under a key that is not in canonical form, such as "priority", which
+// Header.Get does not find; the request writer sends such a key as it is, so
+// the frame has to read it too.
+func priorityFieldValue(h http.Header) string {
+	if v := h.Get("Priority"); v != "" {
+		return v
+	}
+	for k, v := range h {
+		if len(v) > 0 && strings.EqualFold(k, "priority") {
+			return v[0]
+		}
+	}
+	return ""
 }
