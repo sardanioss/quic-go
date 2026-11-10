@@ -102,6 +102,13 @@ type Transport struct {
 	// after the SETTINGS frame, mimicking browser behavior.
 	SendGreaseFrames bool
 
+	// ZeroContentLengthMethods names the methods whose requests send
+	// "content-length: 0" when they carry no body. Nil means POST, PUT and
+	// PATCH, as net/http does; a non-nil list replaces them, so an empty one
+	// sends the header for no method. Browsers disagree here: Chrome sends it
+	// on a POST and a PUT only, Safari on every method but GET and HEAD.
+	ZeroContentLengthMethods []string
+
 	Logger *slog.Logger
 
 	mutex sync.Mutex
@@ -138,6 +145,7 @@ func (t *Transport) init() error {
 				t.MaxResponseHeaderBytes,
 				t.DisableCompression,
 				t.SendGreaseFrames,
+				t.ZeroContentLengthMethods,
 				t.Logger,
 			)
 		}
@@ -466,6 +474,7 @@ func (t *Transport) NewClientConn(conn *quic.Conn) *ClientConn {
 		t.MaxResponseHeaderBytes,
 		t.DisableCompression,
 		t.SendGreaseFrames,
+				t.ZeroContentLengthMethods,
 		t.Logger,
 	)
 	go func() {
@@ -493,6 +502,7 @@ func (t *Transport) NewRawClientConn(conn *quic.Conn) *RawClientConn {
 			t.MaxResponseHeaderBytes,
 			t.DisableCompression,
 			t.SendGreaseFrames,
+				t.ZeroContentLengthMethods,
 			t.Logger,
 		),
 	}
