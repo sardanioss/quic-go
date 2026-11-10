@@ -96,6 +96,7 @@ func newClientConn(
 	maxResponseHeaderBytes int,
 	disableCompression bool,
 	sendGreaseFrames bool,
+	zeroContentLengthMethods []string,
 	logger *slog.Logger,
 ) *ClientConn {
 	var qlogger qlogwriter.Recorder
@@ -118,6 +119,7 @@ func newClientConn(
 		c.maxResponseHeaderBytes = maxResponseHeaderBytes
 	}
 	c.requestWriter = newRequestWriter()
+	c.requestWriter.zeroContentLengthMethods = zeroContentLengthMethods
 	c.rawConn = newRawConn(
 		conn,
 		enableDatagrams,

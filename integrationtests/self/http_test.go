@@ -213,6 +213,41 @@ func TestHTTPMultipleRequests(t *testing.T) {
 	})
 }
 
+// The transport's ZeroContentLengthMethods reach the wire: the server is told
+// an empty body's length on those methods and on no others.
+func TestHTTPZeroContentLengthMethods(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/length", func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, strconv.FormatInt(r.ContentLength, 10))
+	})
+	port := startHTTPServer(t, mux)
+
+	declared := func(cl *http.Client) string {
+		var methods []string
+		for _, method := range []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"} {
+			req, err := http.NewRequest(method, fmt.Sprintf("https://localhost:%d/length", port), nil)
+			require.NoError(t, err)
+			resp, err := cl.Do(req)
+			require.NoError(t, err)
+			body, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			resp.Body.Close()
+			if string(body) == "0" {
+				methods = append(methods, method)
+			}
+		}
+		return strings.Join(methods, " ")
+	}
+
+	require.Equal(t, "POST PUT PATCH", declared(newHTTP3Client(t)))
+	require.Equal(t, "POST PUT", declared(newHTTP3Client(t, func(tr *http3.Transport) {
+		tr.ZeroContentLengthMethods = []string{"POST", "PUT"}
+	})))
+	require.Equal(t, "POST PUT PATCH DELETE OPTIONS", declared(newHTTP3Client(t, func(tr *http3.Transport) {
+		tr.ZeroContentLengthMethods = []string{"POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
+	})))
+}
+
 func TestContentLengthForSmallResponse(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/small", func(w http.ResponseWriter, r *http.Request) {

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/textproto"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,6 +31,9 @@ type requestWriter struct {
 	mutex     sync.Mutex
 	encoder   *qpack.Encoder
 	headerBuf *bytes.Buffer
+
+	// zeroContentLengthMethods is Transport.ZeroContentLengthMethods.
+	zeroContentLengthMethods []string
 }
 
 func newRequestWriter() *requestWriter {
@@ -199,6 +203,17 @@ func (w *requestWriter) encodeHeaders(req *http.Request, addGzipHeader bool, tra
 
 		var didUA bool
 
+		// The length is the body's, never the caller's. It is written once: in
+		// the slot the header order names for it, or after the other headers
+		// when the order does not name it.
+		var didContentLength bool
+		writeContentLength := func() {
+			if !didContentLength && shouldSendReqContentLength(req.Method, contentLength, w.zeroContentLengthMethods) {
+				f("content-length", strconv.FormatInt(contentLength, 10))
+			}
+			didContentLength = true
+		}
+
 		// Helper to process a single header. The values are passed in rather
 		// than looked up here, because a name may hold more than one slot in
 		// the order list and the caller decides which of its values this slot
@@ -264,6 +279,10 @@ func (w *requestWriter) encodeHeaders(req *http.Request, addGzipHeader bool, tra
 
 			// First, process headers in the specified order
 			for _, k := range headerOrder {
+				if strings.EqualFold(k, "content-length") {
+					writeContentLength()
+					continue
+				}
 				hk, ok := resolveHeaderKey(req.Header, k)
 				if !ok {
 					continue
@@ -324,9 +343,7 @@ func (w *requestWriter) encodeHeaders(req *http.Request, addGzipHeader bool, tra
 			}
 		}
 
-		if shouldSendReqContentLength(req.Method, contentLength) {
-			f("content-length", strconv.FormatInt(contentLength, 10))
-		}
+		writeContentLength()
 		if addGzipHeader {
 			f("accept-encoding", "gzip")
 		}
@@ -424,10 +441,11 @@ func actualContentLength(req *http.Request) int64 {
 
 // shouldSendReqContentLength reports whether the http2.Transport should send
 // a "content-length" request header. This logic is basically a copy of the net/http
-// transferWriter.shouldSendContentLength.
+// transferWriter.shouldSendContentLength, except that zeroMethods, when non-nil,
+// replaces the methods that declare an empty body.
 // The contentLength is the corrected contentLength (so 0 means actually 0, not unknown).
 // -1 means unknown.
-func shouldSendReqContentLength(method string, contentLength int64) bool {
+func shouldSendReqContentLength(method string, contentLength int64, zeroMethods []string) bool {
 	if contentLength > 0 {
 		return true
 	}
@@ -436,6 +454,9 @@ func shouldSendReqContentLength(method string, contentLength int64) bool {
 	}
 	// For zero bodies, whether we send a content-length depends on the method.
 	// It also kinda doesn't matter for http2 either way, with END_STREAM.
+	if zeroMethods != nil {
+		return slices.Contains(zeroMethods, method)
+	}
 	switch method {
 	case "POST", "PUT", "PATCH":
 		return true
