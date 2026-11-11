@@ -110,6 +110,10 @@ type Transport struct {
 	// CloseIdleConnections let go of, so a client can close the way the
 	// browser it mimics does. Left nil, the connection is closed with
 	// CloseWithError(0, "").
+	//
+	// It is called with the Transport's lock held, so it must not call back
+	// into the Transport. Each connection keeps the value it was dialed
+	// with, so setting it later affects only new connections.
 	CloseConn func(*quic.Conn) error
 
 	Logger *slog.Logger
