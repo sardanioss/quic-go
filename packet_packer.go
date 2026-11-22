@@ -141,6 +141,12 @@ type packetPacker struct {
 
 	// chromeStyleInitial enables Chrome-like frame patterns in Initial packets
 	chromeStyleInitial bool
+	// initialCryptoPerPacket caps the CRYPTO data in each Initial packet
+	// built from the crypto stream. 0 fills the packet.
+	initialCryptoPerPacket protocol.ByteCount
+	// shortInitialPacketNumbers encodes Initial packet numbers below 127 in
+	// one byte.
+	shortInitialPacketNumbers bool
 }
 
 var _ packer = &packetPacker{}
@@ -653,7 +659,20 @@ func (p *packetPacker) maybeGetCryptoPacket(
 			}
 		}
 
+		// A client may put less of its ClientHello in an Initial packet than
+		// would fit. Safari's first Initial carries 999 bytes of it.
+		cryptoLeft := protocol.MaxByteCount
+		if encLevel == protocol.EncryptionInitial && p.initialCryptoPerPacket > 0 {
+			cryptoLeft = p.initialCryptoPerPacket
+			popCryptoFrame = func(maxLen protocol.ByteCount) *wire.CryptoFrame {
+				return p.initialStream.PopCryptoFrameLimited(maxLen, cryptoLeft)
+			}
+		}
+
 		for hasCryptoData() {
+			if cryptoLeft <= 0 {
+				break
+			}
 			if p.chromeStyleInitial && encLevel == protocol.EncryptionInitial {
 				if pl.length >= maxDataSize {
 					break
@@ -671,6 +690,7 @@ func (p *packetPacker) maybeGetCryptoPacket(
 			if cf == nil {
 				break
 			}
+			cryptoLeft -= protocol.ByteCount(len(cf.Data))
 			pl.frames = append(pl.frames, ackhandler.Frame{Frame: cf, Handler: handler})
 			pl.length += cf.Length(v)
 			maxPacketSize -= cf.Length(v)
@@ -958,6 +978,12 @@ func (p *packetPacker) PackPathProbePacket(connID protocol.ConnectionID, frames 
 
 func (p *packetPacker) getLongHeader(encLevel protocol.EncryptionLevel, v protocol.Version) *wire.ExtendedHeader {
 	pn, pnLen := p.pnManager.PeekPacketNumber(encLevel)
+	// One byte holds any packet number below 127, whatever has been
+	// acknowledged: RFC 9000 Appendix A.2 asks for twice the distance to the
+	// largest acknowledged packet, and that distance is at most pn+1.
+	if p.shortInitialPacketNumbers && encLevel == protocol.EncryptionInitial && pn < 127 {
+		pnLen = protocol.PacketNumberLen1
+	}
 	hdr := &wire.ExtendedHeader{
 		PacketNumber:    pn,
 		PacketNumberLen: pnLen,

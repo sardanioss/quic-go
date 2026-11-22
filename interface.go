@@ -276,6 +276,23 @@ type Config struct {
 	// 0, or any value below 2, keeps the RFC 9000 default of 2, which isn't
 	// sent. Safari sends 64. Only used by clients.
 	ActiveConnectionIDLimit uint64
+
+	// InitialCryptoDataPerPacket caps how many bytes of its ClientHello a
+	// client puts in one Initial packet. 0 fills each packet. Safari 26.3's
+	// first Initial carries 999 bytes and padding, and the second the rest.
+	// Retransmitted CRYPTO data isn't capped. Only used by clients.
+	InitialCryptoDataPerPacket uint16
+
+	// PacketNumbersFromZero starts a client's Initial packet numbers at 0, as
+	// RFC 9000 section 12.3 has it and as Safari does. By default a client
+	// starts them at 1, as Chrome does.
+	PacketNumbersFromZero bool
+
+	// ShortInitialPacketNumbers encodes a client's Initial packet numbers
+	// below 127 in one byte, the shortest RFC 9000 Appendix A.2 allows, as
+	// Safari does. By default quic-go uses two bytes until the peer has
+	// acknowledged a packet.
+	ShortInitialPacketNumbers bool
 }
 
 // ClientInfo contains information about an incoming connection attempt.

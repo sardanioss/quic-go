@@ -83,8 +83,14 @@ func (s *baseCryptoStream) HasData() bool {
 }
 
 func (s *baseCryptoStream) PopCryptoFrame(maxLen protocol.ByteCount) *wire.CryptoFrame {
+	return s.popCryptoFrame(maxLen, protocol.MaxByteCount)
+}
+
+// popCryptoFrame is PopCryptoFrame with the frame's data capped at maxData
+// bytes.
+func (s *baseCryptoStream) popCryptoFrame(maxLen, maxData protocol.ByteCount) *wire.CryptoFrame {
 	f := &wire.CryptoFrame{Offset: s.writeOffset}
-	n := min(f.MaxDataLen(maxLen), protocol.ByteCount(len(s.writeBuf)))
+	n := min(f.MaxDataLen(maxLen), protocol.ByteCount(len(s.writeBuf)), maxData)
 	if n <= 0 {
 		return nil
 	}
@@ -188,8 +194,14 @@ func (s *initialCryptoStream) Write(p []byte) (int, error) {
 }
 
 func (s *initialCryptoStream) PopCryptoFrame(maxLen protocol.ByteCount) *wire.CryptoFrame {
+	return s.PopCryptoFrameLimited(maxLen, protocol.MaxByteCount)
+}
+
+// PopCryptoFrameLimited is PopCryptoFrame with the frame's data capped at
+// maxData bytes.
+func (s *initialCryptoStream) PopCryptoFrameLimited(maxLen, maxData protocol.ByteCount) *wire.CryptoFrame {
 	if !s.scramble {
-		return s.baseCryptoStream.PopCryptoFrame(maxLen)
+		return s.baseCryptoStream.popCryptoFrame(maxLen, maxData)
 	}
 
 	// send out the skipped parts
@@ -205,7 +217,7 @@ func (s *initialCryptoStream) PopCryptoFrame(maxLen protocol.ByteCount) *wire.Cr
 				break
 			}
 			f = &wire.CryptoFrame{Offset: c.start}
-			n := min(f.MaxDataLen(maxLen), c.end-c.start)
+			n := min(f.MaxDataLen(maxLen), c.end-c.start, maxData)
 			if n <= 0 {
 				return nil
 			}
@@ -241,7 +253,7 @@ func (s *initialCryptoStream) PopCryptoFrame(maxLen protocol.ByteCount) *wire.Cr
 	if maxOffset == protocol.InvalidByteCount {
 		maxOffset = s.end
 	}
-	n := min(f.MaxDataLen(maxLen), maxOffset-s.writeOffset)
+	n := min(f.MaxDataLen(maxLen), maxOffset-s.writeOffset, maxData)
 	if n <= 0 {
 		return nil
 	}
