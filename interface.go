@@ -245,6 +245,11 @@ type Config struct {
 
 	// CustomTransportParameterOrder specifies the order when TransportParameterOrder is TransportParameterOrderCustom.
 	// Use transport parameter IDs (e.g., 0x1 for max_idle_timeout, 0x4 for initial_max_data).
+	// Of the parameters quic-go writes itself, a client sends only the listed ones,
+	// and no GREASE parameter is added. A listed ID that quic-go doesn't implement is
+	// sent at its place, with its value taken from AdditionalTransportParameters.
+	// Additional parameters the list leaves out follow at the end.
+	// A client must list initial_source_connection_id (0xf), which RFC 9000 requires.
 	CustomTransportParameterOrder []uint64
 
 	// TransportParameterShuffleSeed enables shuffling of transport parameter order.
@@ -264,6 +269,30 @@ type Config struct {
 	// advertised when EnableDatagrams is true. Chrome uses 65536; the default is 16383.
 	// If 0, falls back to the global SetMaxDatagramSize value.
 	MaxDatagramFrameSize uint64
+
+	// ActiveConnectionIDLimit is the active_connection_id_limit a client
+	// advertises: how many connection IDs the server may have issued it at
+	// once, the one in use included. The client then stores up to that many.
+	// 0, or any value below 2, keeps the RFC 9000 default of 2, which isn't
+	// sent. Safari sends 64. Only used by clients.
+	ActiveConnectionIDLimit uint64
+
+	// InitialCryptoDataPerPacket caps how many bytes of its ClientHello a
+	// client puts in one Initial packet. 0 fills each packet. Safari 26.3's
+	// first Initial carries 999 bytes and padding, and the second the rest.
+	// Retransmitted CRYPTO data isn't capped. Only used by clients.
+	InitialCryptoDataPerPacket uint16
+
+	// PacketNumbersFromZero starts a client's Initial packet numbers at 0, as
+	// RFC 9000 section 12.3 has it and as Safari does. By default a client
+	// starts them at 1, as Chrome does.
+	PacketNumbersFromZero bool
+
+	// ShortInitialPacketNumbers encodes a client's Initial packet numbers
+	// below 127 in one byte, the shortest RFC 9000 Appendix A.2 allows, as
+	// Safari does. By default quic-go uses two bytes until the peer has
+	// acknowledged a packet.
+	ShortInitialPacketNumbers bool
 }
 
 // ClientInfo contains information about an incoming connection attempt.

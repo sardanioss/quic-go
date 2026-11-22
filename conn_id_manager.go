@@ -2,6 +2,7 @@ package quic
 
 import (
 	"fmt"
+	"math"
 	"slices"
 
 	"github.com/sardanioss/quic-go/internal/protocol"
@@ -18,6 +19,9 @@ type newConnID struct {
 
 type connIDManager struct {
 	queue []newConnID
+	// limit is how many connection IDs the peer may have issued at once, the
+	// one in use included.
+	limit int
 
 	highestProbingID uint64
 	pathProbing      map[pathID]newConnID // initialized lazily
@@ -54,6 +58,16 @@ func newConnIDManager(
 		removeStatelessResetToken: removeStatelessResetToken,
 		queueControlFrame:         queueControlFrame,
 		queue:                     make([]newConnID, 0, protocol.MaxActiveConnectionIDs),
+		limit:                     protocol.MaxActiveConnectionIDs,
+	}
+}
+
+// raiseLimit lets the peer issue up to n connection IDs, the one in use
+// included. A client calls it when it advertises an active_connection_id_limit
+// above the number this manager keeps by default.
+func (h *connIDManager) raiseLimit(n uint64) {
+	if n > uint64(h.limit) {
+		h.limit = int(min(n, math.MaxInt32))
 	}
 }
 
@@ -65,7 +79,7 @@ func (h *connIDManager) Add(f *wire.NewConnectionIDFrame) error {
 	if err := h.add(f); err != nil {
 		return err
 	}
-	if len(h.queue) >= protocol.MaxActiveConnectionIDs {
+	if len(h.queue) >= h.limit {
 		return &qerr.TransportError{ErrorCode: qerr.ConnectionIDLimitError}
 	}
 	return nil
