@@ -245,6 +245,11 @@ type Config struct {
 
 	// CustomTransportParameterOrder specifies the order when TransportParameterOrder is TransportParameterOrderCustom.
 	// Use transport parameter IDs (e.g., 0x1 for max_idle_timeout, 0x4 for initial_max_data).
+	// Of the parameters quic-go writes itself, a client sends only the listed ones,
+	// and no GREASE parameter is added. A listed ID that quic-go doesn't implement is
+	// sent at its place, with its value taken from AdditionalTransportParameters.
+	// Additional parameters the list leaves out follow at the end.
+	// A client must list initial_source_connection_id (0xf), which RFC 9000 requires.
 	CustomTransportParameterOrder []uint64
 
 	// TransportParameterShuffleSeed enables shuffling of transport parameter order.

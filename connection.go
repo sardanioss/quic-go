@@ -347,6 +347,7 @@ var newConnection = func(
 		RetrySourceConnectionID:   retrySrcConnID,
 		EnableResetStreamAt:       conf.EnableStreamResetPartialDelivery,
 		OrderMode:                 s.config.TransportParameterOrder,
+		CustomOrder:               s.config.CustomTransportParameterOrder,
 		ShuffleSeed:               s.config.TransportParameterShuffleSeed,
 		AdditionalParams:          s.config.AdditionalTransportParameters,
 	}
@@ -460,35 +461,7 @@ var newClientConnection = func(
 	)
 	s.currentMTUEstimate.Store(uint32(estimateMaxPayloadSize(protocol.ByteCount(s.config.InitialPacketSize))))
 	oneRTTStream := newCryptoStream()
-	params := &wire.TransportParameters{
-		InitialMaxStreamDataBidiRemote: protocol.ByteCount(s.config.InitialStreamReceiveWindow),
-		InitialMaxStreamDataBidiLocal:  protocol.ByteCount(s.config.InitialStreamReceiveWindow),
-		InitialMaxStreamDataUni:        protocol.ByteCount(s.config.InitialStreamReceiveWindow),
-		InitialMaxData:                 protocol.ByteCount(s.config.InitialConnectionReceiveWindow),
-		MaxIdleTimeout:                 s.config.MaxIdleTimeout,
-		MaxBidiStreamNum:               protocol.StreamNum(s.config.MaxIncomingStreams),
-		MaxUniStreamNum:                protocol.StreamNum(s.config.MaxIncomingUniStreams),
-		MaxAckDelay:                    protocol.DefaultMaxAckDelay, // Use default so it's not sent (Chrome behavior)
-		MaxUDPPayloadSize:              protocol.MaxPacketBufferSize,
-		AckDelayExponent:               protocol.AckDelayExponent,
-		// Use default value so active_connection_id_limit is not sent in transport parameters.
-		// Chrome doesn't send this parameter, relying on the default value of 2.
-		ActiveConnectionIDLimit:   protocol.DefaultActiveConnectionIDLimit,
-		InitialSourceConnectionID: srcConnID,
-		EnableResetStreamAt:       conf.EnableStreamResetPartialDelivery,
-		OrderMode:                 s.config.TransportParameterOrder,
-		ShuffleSeed:               s.config.TransportParameterShuffleSeed,
-		AdditionalParams:          s.config.AdditionalTransportParameters,
-	}
-	if s.config.EnableDatagrams {
-		if s.config.MaxDatagramFrameSize > 0 {
-			params.MaxDatagramFrameSize = protocol.ByteCount(s.config.MaxDatagramFrameSize)
-		} else {
-			params.MaxDatagramFrameSize = wire.MaxDatagramSize
-		}
-	} else {
-		params.MaxDatagramFrameSize = protocol.InvalidByteCount
-	}
+	params := clientTransportParameters(s.config, srcConnID)
 	if s.qlogger != nil {
 		s.qlogTransportParameters(params, protocol.PerspectiveClient, false)
 	}
@@ -521,6 +494,42 @@ var newClientConnection = func(
 		}
 	}
 	return &wrappedConn{Conn: s}
+}
+
+// clientTransportParameters builds the transport parameters a client sends,
+// from its populated config.
+func clientTransportParameters(conf *Config, srcConnID protocol.ConnectionID) *wire.TransportParameters {
+	params := &wire.TransportParameters{
+		InitialMaxStreamDataBidiRemote: protocol.ByteCount(conf.InitialStreamReceiveWindow),
+		InitialMaxStreamDataBidiLocal:  protocol.ByteCount(conf.InitialStreamReceiveWindow),
+		InitialMaxStreamDataUni:        protocol.ByteCount(conf.InitialStreamReceiveWindow),
+		InitialMaxData:                 protocol.ByteCount(conf.InitialConnectionReceiveWindow),
+		MaxIdleTimeout:                 conf.MaxIdleTimeout,
+		MaxBidiStreamNum:               protocol.StreamNum(conf.MaxIncomingStreams),
+		MaxUniStreamNum:                protocol.StreamNum(conf.MaxIncomingUniStreams),
+		MaxAckDelay:                    protocol.DefaultMaxAckDelay, // Use default so it's not sent (Chrome behavior)
+		MaxUDPPayloadSize:              protocol.MaxPacketBufferSize,
+		AckDelayExponent:               protocol.AckDelayExponent,
+		// Use default value so active_connection_id_limit is not sent in transport parameters.
+		// Chrome doesn't send this parameter, relying on the default value of 2.
+		ActiveConnectionIDLimit:   protocol.DefaultActiveConnectionIDLimit,
+		InitialSourceConnectionID: srcConnID,
+		EnableResetStreamAt:       conf.EnableStreamResetPartialDelivery,
+		OrderMode:                 conf.TransportParameterOrder,
+		CustomOrder:               conf.CustomTransportParameterOrder,
+		ShuffleSeed:               conf.TransportParameterShuffleSeed,
+		AdditionalParams:          conf.AdditionalTransportParameters,
+	}
+	if conf.EnableDatagrams {
+		if conf.MaxDatagramFrameSize > 0 {
+			params.MaxDatagramFrameSize = protocol.ByteCount(conf.MaxDatagramFrameSize)
+		} else {
+			params.MaxDatagramFrameSize = wire.MaxDatagramSize
+		}
+	} else {
+		params.MaxDatagramFrameSize = protocol.InvalidByteCount
+	}
+	return params
 }
 
 func (c *Conn) preSetup() {

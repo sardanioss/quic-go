@@ -113,9 +113,14 @@ type TransportParameters struct {
 
 	// OrderMode controls the order in which transport parameters are sent
 	OrderMode TransportParameterOrderMode
-	// CustomOrder specifies the order when OrderMode is TransportParameterOrderCustom
-	// Use transport parameter IDs (e.g., 0x1 for max_idle_timeout, 0x4 for initial_max_data)
-	CustomOrder []transportParameterID
+	// CustomOrder lists the transport parameter IDs to send, in order, when
+	// OrderMode is TransportParameterOrderCustom (e.g., 0x1 for max_idle_timeout,
+	// 0x4 for initial_max_data). Of the parameters quic-go writes itself, a
+	// client sends only the listed ones, and no GREASE parameter is added. A
+	// listed ID that quic-go doesn't implement is sent at its place with the
+	// value AdditionalParams holds for it. Additional parameters the list
+	// leaves out follow at the end.
+	CustomOrder []uint64
 	// ShuffleSeed enables shuffling of transport parameter order.
 	// When non-zero and OrderMode is TransportParameterOrderChrome,
 	// the Chrome order is shuffled using this seed (deterministic per seed).
@@ -525,7 +530,10 @@ func (p *TransportParameters) Marshal(pers protocol.Perspective) []byte {
 	case TransportParameterOrderFirefox:
 		order = firefoxTransportParameterOrder
 	case TransportParameterOrderCustom:
-		order = p.CustomOrder
+		order = make([]transportParameterID, 0, len(p.CustomOrder))
+		for _, id := range p.CustomOrder {
+			order = append(order, transportParameterID(id))
+		}
 	default:
 		// Use default ordering (original quic-go behavior)
 		return p.marshalDefault(pers)
@@ -669,38 +677,34 @@ func (p *TransportParameters) marshalParam(b []byte, paramID transportParameterI
 			written[paramID] = true
 			return p.marshalVarintParam(b, paramID, uint64(*p.MinAckDelay/time.Microsecond))
 		}
-	case googleVersionParameterID:
-		// google_version (0x4752) - only for Chrome mode, get from additional params
-		if p.OrderMode == TransportParameterOrderChrome {
-			if v, ok := additionalParams[uint64(googleVersionParameterID)]; ok {
-				written[paramID] = true
-				b = quicvarint.Append(b, uint64(paramID))
-				b = quicvarint.Append(b, uint64(len(v)))
-				return append(b, v...)
-			}
-		}
-	case googleConnectionOptionsParameterID:
-		// google_connection_options (0x3128) - only for Chrome mode, get from additional params
-		if p.OrderMode == TransportParameterOrderChrome {
-			if v, ok := additionalParams[uint64(googleConnectionOptionsParameterID)]; ok {
-				written[paramID] = true
-				b = quicvarint.Append(b, uint64(paramID))
-				b = quicvarint.Append(b, uint64(len(v)))
-				return append(b, v...)
-			}
-		}
-	case versionInformationParameterID:
-		// version_information (0x11) - only for Chrome mode, get from additional params
-		if p.OrderMode == TransportParameterOrderChrome {
-			if v, ok := additionalParams[uint64(versionInformationParameterID)]; ok {
-				written[paramID] = true
-				b = quicvarint.Append(b, uint64(paramID))
-				b = quicvarint.Append(b, uint64(len(v)))
-				return append(b, v...)
-			}
+	case googleVersionParameterID, googleConnectionOptionsParameterID, versionInformationParameterID:
+		// google_version (0x4752), google_connection_options (0x3128) and
+		// version_information (0x11) take their values from the additional
+		// params, and go out where the order lists them: Chrome's, or a
+		// custom one.
+		return marshalAdditionalParam(b, paramID, written, additionalParams)
+	default:
+		// A custom order may also list a parameter quic-go doesn't implement,
+		// such as a browser's private one, with its value in the additional
+		// params.
+		if p.OrderMode == TransportParameterOrderCustom {
+			return marshalAdditionalParam(b, paramID, written, additionalParams)
 		}
 	}
 	return b
+}
+
+// marshalAdditionalParam writes a parameter whose value comes from the
+// additional params, if they hold one for it.
+func marshalAdditionalParam(b []byte, paramID transportParameterID, written map[transportParameterID]bool, additionalParams map[uint64][]byte) []byte {
+	v, ok := additionalParams[uint64(paramID)]
+	if !ok {
+		return b
+	}
+	written[paramID] = true
+	b = quicvarint.Append(b, uint64(paramID))
+	b = quicvarint.Append(b, uint64(len(v)))
+	return append(b, v...)
 }
 
 // marshalPreferredAddress marshals the preferred_address parameter
