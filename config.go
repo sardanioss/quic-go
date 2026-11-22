@@ -135,5 +135,6 @@ func populateConfig(config *Config) *Config {
 		TransportParameterOrder:          config.TransportParameterOrder,
 		CustomTransportParameterOrder:    config.CustomTransportParameterOrder,
 		TransportParameterShuffleSeed:    config.TransportParameterShuffleSeed,
+		ActiveConnectionIDLimit:          config.ActiveConnectionIDLimit,
 	}
 }

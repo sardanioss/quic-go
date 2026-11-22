@@ -269,6 +269,13 @@ type Config struct {
 	// advertised when EnableDatagrams is true. Chrome uses 65536; the default is 16383.
 	// If 0, falls back to the global SetMaxDatagramSize value.
 	MaxDatagramFrameSize uint64
+
+	// ActiveConnectionIDLimit is the active_connection_id_limit a client
+	// advertises: how many connection IDs the server may have issued it at
+	// once, the one in use included. The client then stores up to that many.
+	// 0, or any value below 2, keeps the RFC 9000 default of 2, which isn't
+	// sent. Safari sends 64. Only used by clients.
+	ActiveConnectionIDLimit uint64
 }
 
 // ClientInfo contains information about an incoming connection attempt.

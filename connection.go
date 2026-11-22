@@ -432,6 +432,9 @@ var newClientConnection = func(
 		runner.RemoveResetToken,
 		s.queueControlFrame,
 	)
+	// Room for every connection ID the server may issue under the
+	// active_connection_id_limit this client advertises.
+	s.connIDManager.raiseLimit(conf.ActiveConnectionIDLimit)
 	s.connIDGenerator = newConnIDGenerator(
 		runner,
 		srcConnID,
@@ -510,9 +513,10 @@ func clientTransportParameters(conf *Config, srcConnID protocol.ConnectionID) *w
 		MaxAckDelay:                    protocol.DefaultMaxAckDelay, // Use default so it's not sent (Chrome behavior)
 		MaxUDPPayloadSize:              protocol.MaxPacketBufferSize,
 		AckDelayExponent:               protocol.AckDelayExponent,
-		// Use default value so active_connection_id_limit is not sent in transport parameters.
+		// The default value unless the config asks for more, so that
+		// active_connection_id_limit is not sent in transport parameters.
 		// Chrome doesn't send this parameter, relying on the default value of 2.
-		ActiveConnectionIDLimit:   protocol.DefaultActiveConnectionIDLimit,
+		ActiveConnectionIDLimit:   max(conf.ActiveConnectionIDLimit, protocol.DefaultActiveConnectionIDLimit),
 		InitialSourceConnectionID: srcConnID,
 		EnableResetStreamAt:       conf.EnableStreamResetPartialDelivery,
 		OrderMode:                 conf.TransportParameterOrder,
